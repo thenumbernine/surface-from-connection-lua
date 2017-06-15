@@ -239,7 +239,7 @@ function App:initGL()
 					e = e + (e * connk) * ds
 					X = X + e(_,k) * ds
 					--]]
-					-- [[ rk4 ...
+					--[[ rk4 ...
 					e = int_rk4(0, e, function(s, e)
 						local f = s / ds
 						-- treating connections as constant
@@ -258,7 +258,7 @@ function App:initGL()
 						return e(_,k) * f + eOrig(_,k) * (1 - f)
 					end, ds)
 					--]]
-					--[[
+					-- [[
 					do
 						-- if d/ds e = conn e then ...
 						-- then we can solve this as a linear dynamic system!
@@ -275,6 +275,8 @@ function App:initGL()
 						local c,d = connk[2]:unpack()
 						local asym = (a - d) / 2
 						local discr = asym^2 + b * c
+						
+						local de
 
 						-- [a b]
 						-- [c a]
@@ -283,20 +285,24 @@ function App:initGL()
 								local l1, l2 = a + sd, a - sd
 								local evR = matrix{{1, 1}, {math.sqrt(c/b), -math.sqrt(c/b)}}
 								local evL = matrix{{1, math.sqrt(b/c)}, {1, -math.sqrt(b/c)}} / 2
-								e = e * evR * matrix{
-									{math.exp(ds * l1), 0},
-									{0, math.exp(ds * l2)}
-								} * evL
+								de = function(ds)
+									return evR * matrix{
+										{math.exp(ds * l1), 0},
+										{0, math.exp(ds * l2)}
+									} * evL
+								end
 							else
 								-- b c < = means either b or c < 0 but not both
 								local theta = math.sqrt(-b * c)
 								local ratio = math.sqrt(-b / c)
-								local costh = math.cos(theta * ds)
-								local sinth = math.sin(theta * ds)
-								e = e * matrix{
-									{costh, sinth / ratio},
-									{-sinth / ratio, costh}
-								} * math.exp(a * ds)
+								de = function(ds)
+									local costh = math.cos(theta * ds)
+									local sinth = math.sin(theta * ds)
+									return matrix{
+										{costh, -sinth / ratio},
+										{sinth / ratio, costh}
+									} * math.exp(a * ds)
+								end
 							end
 						-- [a b]
 						-- [0 a] for a real and b nonzero 
@@ -309,30 +315,36 @@ function App:initGL()
 							local l1, l2 = a, d
 							local evR = matrix{{1,0},{0,1}}
 							local evL = matrix(evR)
-							e = e * evR * matrix{
-								{math.exp(ds * l1), 0},
-								{0, math.exp(ds * l2)}
-							} * evL
+							de = function(ds)
+								return evR * matrix{
+									{math.exp(ds * l1), 0},
+									{0, math.exp(ds * l2)}
+								} * evL
+							end
 						-- [a b]
 						-- [0 d]
 						elseif c == 0 then
 							local l1, l2 = a, d
 							local evR = matrix{{1, 0}, {b, d-a}}:T()
 							local evL = matrix{{1, b/(a-d)}, {0, -1/(a-d)}}
-							e = e * evR * matrix{
-								{math.exp(ds * l1), 0},
-								{0, math.exp(ds * l2)}
-							} * evL
+							de = function(ds)
+								return evR * matrix{
+									{math.exp(ds * l1), 0},
+									{0, math.exp(ds * l2)}
+								} * evL						
+							end
 						-- [a 0]
 						-- [c d]
 						elseif b == 0 then
 							local l1, l2 = a, d
 							local evR = matrix{{a-d, c}, {0, 1}}:T()
 							local evL = matrix{{1/(a-d), 0}, {-c/(a-d), 1}}
-							e = e * evR * matrix{
-								{math.exp(ds * l1), 0},
-								{0, math.exp(ds * l2)}
-							} * evL
+							de = function(ds)
+								return evR * matrix{
+									{math.exp(ds * l1), 0},
+									{0, math.exp(ds * l2)}
+								} * evL						
+							end
 						elseif discr == 0 then	-- means (a-d)^2 = 4*b*c, then we have multiplicity 2
 							error"here"
 						elseif discr > 0 then
@@ -354,13 +366,18 @@ function App:initGL()
 								{-1, (asym + sd)/c},
 								{1, (-asym + sd)/c},
 							} / (2 * sd)
-							e = e * evR * matrix{
-								{math.exp(ds * l1), 0},
-								{0, math.exp(ds * l2)}
-							} * evL
+							de = function(ds)
+								return evR * matrix{
+									{math.exp(ds * l1), 0},
+									{0, math.exp(ds * l2)}
+								} * evL
+							end
 						else -- discr < 0	-- complex eigenvectors
 							error"here"
 						end
+						
+						X = int_rk4(0, X, function(s) return (e * de(s))(_,k) end, ds)
+						e = e * de(ds)
 					end
 					--]]
 					
@@ -396,17 +413,21 @@ function App:update()
 
 	local n = #self.size
 
-	gl.glColor3f(0,1,1)
+	--gl.glColor3f(0,1,1)
 	gl.glBegin(gl.GL_LINES)
 	for i=1,self.size[1] do
 		for j=1,self.size[2] do
 			-- show the parameter space 
 			if i < self.size[1] then
+				gl.glColor3f((i-1)/self.size[1], (j-1)/self.size[2], .5)
 				gl.glVertex2d(self.Xs[i][j]:unpack())
+				gl.glColor3f(i/self.size[1], (j-1)/self.size[2], .5)
 				gl.glVertex2d(self.Xs[i+1][j]:unpack())
 			end
 			if j < self.size[2] then
+				gl.glColor3f((i-1)/self.size[1], (j-1)/self.size[2], .5)
 				gl.glVertex2d(self.Xs[i][j]:unpack())
+				gl.glColor3f((i-1)/self.size[1], j/self.size[2], .5)
 				gl.glVertex2d(self.Xs[i][j+1]:unpack())
 			end
 		end
@@ -429,7 +450,7 @@ function App:update()
 			local u = self.Xs[i][j]
 			local e = self.es[i][j]:T()
 			for k=1,n do
-				gl.glColor3f(colors[k]:unpack())
+				gl.glColor3f(colors[k]:unpack()) -- color by axis	
 				gl.glVertex2d(u:unpack())
 				local ek = e[k]
 				--[[ normalize or not
