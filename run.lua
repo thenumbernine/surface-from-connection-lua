@@ -85,7 +85,7 @@ local PolarHolGeom = class(Geometry)
 PolarHolGeom.coords = {'r', 'θ'}
 
 PolarHolGeom.umin = matrix{1, 0}
-PolarHolGeom.umax = matrix{10, 2 * math.pi}
+PolarHolGeom.umax = matrix{2, 2 * math.pi}
 
 function PolarHolGeom:calc_gs()
 	local app = self.app
@@ -119,7 +119,7 @@ function PolarNonHolGeom:calc_conns()
 end
 
 function App:initGL()
-	self.size = matrix{16,16}
+	self.size = matrix{4,16}
 		
 	self.geom = PolarHolGeom(self)
 	--self.geom = PolarNonHolGeom(self)
@@ -129,12 +129,12 @@ function App:initGL()
 	
 	local n = #self.size
 	
-	-- [[ cell centered, including borders
+	--[[ cell centered, including borders
 	self.dx = matrix{n}:ones():emul(self.umax - self.umin):ediv(self.size)
 	self.xs = self.size:lambda(function(i,j) return matrix{i-.5, j-.5}:emul(self.dx) + self.umin end)
 	--]]
 	-- [[ vertex centered, excluding borders, so position 2,2 is at umin (useful for centering the corner vertex)
-	self.dx = matrix{n}:ones():emul(self.umax - self.umin):ediv(self.size-2)
+	self.dx = matrix{n}:ones():emul(self.umax - self.umin):ediv(self.size-3)
 	self.xs = self.size:lambda(function(i,j) return matrix{i-2, j-2}:emul(self.dx) + self.umin end)
 	--]]
 	
@@ -210,8 +210,9 @@ function App:initGL()
 				local nextIndex = matrix(index)
 				nextIndex[k] = nextIndex[k] + dir
 				local ni, nj = nextIndex:unpack()
-				if 1 <= ni and ni <= self.size[1]
-				and 1 <= nj and nj <= self.size[2]
+				-- skip the edges
+				if 2 <= ni and ni <= self.size[1]-1
+				and 2 <= nj and nj <= self.size[2]-1
 				and not table.find(sofar, nextIndex) 
 				and not table.find(todo, nextIndex)
 				then
@@ -227,19 +228,12 @@ function App:initGL()
 					
 					local e = matrix(eOrig)
 					local X = matrix(XOrig)
-	
-					print()
-					print('index='..index)
-					print('nextIndex='..nextIndex)
-					print('x='..self.xs[i][j])
-					print('e='..e)
-					print('conn[k]='..connk)
 
 					--[[ forward-euler
 					e = e + (e * connk) * ds
 					X = X + e(_,k) * ds
 					--]]
-					--[[ rk4 ...
+					-- [[ rk4 ...
 					e = int_rk4(0, e, function(s, e)
 						local f = s / ds
 						-- treating connections as constant
@@ -258,7 +252,7 @@ function App:initGL()
 						return e(_,k) * f + eOrig(_,k) * (1 - f)
 					end, ds)
 					--]]
-					-- [[
+					--[[
 					do
 						-- if d/ds e = conn e then ...
 						-- then we can solve this as a linear dynamic system!
@@ -388,7 +382,24 @@ function App:initGL()
 					end
 					e = e:T()
 					--]]
-					
+
+					if k == 1 
+					or (k == 2 and j == 3)
+					then
+						print()
+						print('index='..index)
+						--print('self.dx='..self.dx)
+						print('nextIndex='..nextIndex)
+						print('dx='..dx)
+						print('ds='..ds)
+						print('x='..self.xs[i][j])
+						print('conn[k]='..connk)
+						print('XOrig='..XOrig)
+						print('X='..X)
+						print('eOrig='..eOrig)
+						print('e='..e)
+					end
+
 					self.es[ni][nj] = e
 					self.Xs[ni][nj] = X
 
@@ -396,10 +407,10 @@ function App:initGL()
 --print('|e2| from '..eOrig(_,2):norm()..' to '..e(_,2):norm()..' changing by '..(e(_,2):norm() - eOrig(_,2):norm()))
 --print('X from '..XOrig..' to '..X..' changing by '..(X - XOrig):norm())
 					
-					todo:insert(nextIndex)
+					--todo:insert(nextIndex)
 					--todo:insert(math.random(#todo+1), nextIndex)
 					--todo:insert(math.floor((#todo+1)/2), nextIndex)
-					--todo:insert(1, nextIndex)
+					todo:insert(1, nextIndex)
 				end
 			end	
 		end
