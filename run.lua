@@ -203,7 +203,7 @@ function App:initGL()
 		local g = self.gs[i][j]	
 		local _ = matrix.index
 		--for k=1,n do
-		for k=2,2 do
+		for k=1,2 do
 			local connk = conn(_,_,k)
 	
 			for dir=-1,1,2 do 
