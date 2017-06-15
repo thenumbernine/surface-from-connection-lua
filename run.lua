@@ -233,7 +233,7 @@ function App:initGL()
 					e = e + (e * connk) * ds
 					X = X + e(_,k) * ds
 					--]]
-					-- [[ rk4 ...
+					--[[ rk4 ...
 					e = int_rk4(0, e, function(s, e)
 						local f = s / ds
 						-- treating connections as constant
@@ -252,7 +252,7 @@ function App:initGL()
 						return e(_,k) * f + eOrig(_,k) * (1 - f)
 					end, ds)
 					--]]
-					--[[
+					-- [[
 					do
 						-- if d/ds e = conn e then ...
 						-- then we can solve this as a linear dynamic system!
@@ -426,19 +426,20 @@ function App:update()
 
 	--gl.glColor3f(0,1,1)
 	gl.glBegin(gl.GL_LINES)
-	for i=1,self.size[1] do
-		for j=1,self.size[2] do
+	local size = self.size-1
+	for i=2,size[1] do
+		for j=2,size[2] do
 			-- show the parameter space 
-			if i < self.size[1] then
-				gl.glColor3f((i-1)/self.size[1], (j-1)/self.size[2], .5)
+			if i < size[1] then
+				gl.glColor3f((i-1)/size[1], (j-1)/size[2], .5)
 				gl.glVertex2d(self.Xs[i][j]:unpack())
-				gl.glColor3f(i/self.size[1], (j-1)/self.size[2], .5)
+				gl.glColor3f(i/size[1], (j-1)/size[2], .5)
 				gl.glVertex2d(self.Xs[i+1][j]:unpack())
 			end
-			if j < self.size[2] then
-				gl.glColor3f((i-1)/self.size[1], (j-1)/self.size[2], .5)
+			if j < size[2] then
+				gl.glColor3f((i-1)/size[1], (j-1)/size[2], .5)
 				gl.glVertex2d(self.Xs[i][j]:unpack())
-				gl.glColor3f((i-1)/self.size[1], j/self.size[2], .5)
+				gl.glColor3f((i-1)/size[1], j/size[2], .5)
 				gl.glVertex2d(self.Xs[i][j+1]:unpack())
 			end
 		end
@@ -456,8 +457,8 @@ function App:update()
 	gl.glPushMatrix()
 	gl.glTranslatef(0,0,.1 * scale)
 	gl.glBegin(gl.GL_LINES)
-	for i=1,self.size[1] do
-		for j=1,self.size[2] do
+	for i=2,self.size[1]-1 do
+		for j=2,self.size[2]-1 do
 			local u = self.Xs[i][j]
 			local e = self.es[i][j]:T()
 			for k=1,n do
