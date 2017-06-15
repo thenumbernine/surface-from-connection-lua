@@ -3,8 +3,9 @@ require 'ext'
 local bit = require 'bit'
 local gl = require 'gl'
 local matrix = require 'matrix'
+local complex = require 'symmath.complex'
+local gnuplot = require 'gnuplot'
 local ImGuiApp = require 'imguiapp'
-
 local View = require 'glapp.view'
 local Orbit = require 'glapp.orbit'
 
@@ -27,6 +28,8 @@ local App = class(Orbit(View.apply(ImGuiApp)))
 App.title = 'reconstruct surface from geodesics' 
 App.viewDist = 1
 
+--matrix.__tostring = tolua
+
 function matrix:inv()
 	local size = self:size()
 	assert(#size == 2, "must be a matrix, not a vector or higher dimension array")
@@ -45,71 +48,98 @@ function matrix:inv()
 	end
 end
 
-function App:testExact()
-	local exactConns = self.size:lambda(function(i,j)
-		-- flat space:
-		--return matrix{n,n,n}:zeros()
-		--[[ anholonomic polar in coordinates r, theta:
-		local r = self.xs[i][j][1]
-		-- Gamma^theta_r_theta = -Gamma^r_theta_theta = 1/r
-		return matrix{ {{0,0},{0,-1/r}}, {{0,1/r},{0,0}} }
-		--]]
-		-- [[ holonomic polar
-		local r = self.xs[i][j][1]
-		-- 1/Gamma^theta_theta_r = 1/Gamma^theta_r_theta = -Gamma^r_theta_theta = r
-		return matrix{
-			{
-				{0,0},
-				{0,-r},
-			},
-			{
-				{0,1/r},
-				{1/r,0},
-			}
-		}
-		--]]
-	end)
-	local connNumConnDiff = self.size:lambda(function(i,j)
-		return (self.conns[i][j] - exactConns[i][j]):norm()
+
+-- used for providing initial values for the metric
+-- and verifying accuracy of numerical calculations
+local Geometry = class()
+
+function Geometry:init(app)
+	self.app = app
+end
+
+function Geometry:testExact()
+	local app = self.app
+	local exactConns = self:calc_conns()
+	local connNumConnDiff = app.size:lambda(function(i,j)
+		return (app.conns[i][j] - exactConns[i][j]):norm()
 	end)
 
-	local gnuplot = require 'gnuplot'
-	local x = matrix{self.size[1]-2}:lambda(function(i) return self.xs[i+1][1][1] end)
-	local y = matrix{self.size[2]-2}:lambda(function(j) return self.xs[1][j+1][2] end)
-	local z = (self.size-2):lambda(function(i,j) return connNumConnDiff[i+1][j+1] end)
+	local x = matrix{app.size[1]-2}:lambda(function(i) return app.xs[i+1][1][1] end)
+	local y = matrix{app.size[2]-2}:lambda(function(j) return app.xs[1][j+1][2] end)
+	local z = (app.size-2):lambda(function(i,j) return connNumConnDiff[i+1][j+1] end)
 	gnuplot{
 		output = 'conn numeric vs analytic.png',
 		style = 'data lines',
-		xlabel = self.coordNames[1],
-		ylabel = self.coordNames[2],
+		xlabel = self.coords[1],
+		ylabel = self.coords[2],
 		--log = 'z',
 		griddata = {x = x, y = y, z},
-		{splot=true, using='1:2:3', title = ' Γ^a_b_c |analytic - numeric|'},
+		{splot=true, using='1:2:3', title = 'Γ^a_b_c |analytic - numeric|'},
 	}
-	print('max error between analytical and numerical', z:normLInf())
+	print('max Γ^a_bc |analytic - numeric|', z:normLInf())
+end
+
+
+local PolarHolGeom = class(Geometry)
+
+PolarHolGeom.coords = {'r', 'θ'}
+
+PolarHolGeom.umin = matrix{1, 0}
+PolarHolGeom.umax = matrix{10, 2 * math.pi}
+
+function PolarHolGeom:calc_gs()
+	local app = self.app
+	return app.size:lambda(function(i,j)
+		local r = self.app.xs[i][j][1]
+		return matrix{{1,0},{0,r^2}}
+	end)
+end
+
+function PolarHolGeom:calc_conns()
+	return self.app.size:lambda(function(i,j)
+		local r = self.app.xs[i][j][1]
+		-- 1/Γ^θ_θr = 1/Γ^θ_rθ = -Γ^r_θθ = r
+		return matrix{ {{0,0},{0,-r}}, {{0,1/r},{1/r,0}} }
+	end)
+end
+
+-- The thing about non-holonomic geometry is
+-- it needs commutation coefficients as well.
+-- Otherwise how does it know how far to integrate the geodesics
+-- to get to the next coordinate location?
+-- This information is typically stored in the metric of the holonomic coordinate map.
+local PolarNonHolGeom = class(Geometry)
+
+function PolarNonHolGeom:calc_conns()
+	return self.app.size:lambda(function(i,j)
+		local r = app.xs[i][j][1]
+		-- Γ^θ_rθ = -Γ^r_θθ = 1/r
+		return matrix{ {{0,0},{0,-1/r}}, {{0,1/r},{0,0}} }
+	end)
 end
 
 function App:initGL()
-	self.coordNames = {'r', 'θ'}
 	self.size = matrix{16,16}
-	-- [[ polar 
-	self.umin = matrix{.1, 0}
-	self.umax = matrix{1, 2 * math.pi}
-	--]]
-	--[[
-	self.umin = matrix{-1, -1}
-	self.umax = matrix{1, 1}
-	--]]
+		
+	self.geom = PolarHolGeom(self)
+	--self.geom = PolarNonHolGeom(self)
+	
+	self.umin = self.geom and self.geom.umin or matrix{-1, -1}
+	self.umax = self.geom and self.geom.umax or matrix{1, 1}
+	
 	local n = #self.size
+	
+	-- [[ cell centered, including borders
 	self.dx = matrix{n}:ones():emul(self.umax - self.umin):ediv(self.size)
-	self.xs = self.size:lambda(function(i,j)
-		return matrix{i-.5, j-.5}:emul(self.dx) + self.umin
-	end)
-	self.gs = self.size:lambda(function(i,j)
-		-- holonomic polar
-		local r = self.xs[i][j][1]
-		return matrix{{1,0},{0,r^2}}
-	end)
+	self.xs = self.size:lambda(function(i,j) return matrix{i-.5, j-.5}:emul(self.dx) + self.umin end)
+	--]]
+	-- [[ vertex centered, excluding borders, so position 2,2 is at umin (useful for centering the corner vertex)
+	self.dx = matrix{n}:ones():emul(self.umax - self.umin):ediv(self.size-2)
+	self.xs = self.size:lambda(function(i,j) return matrix{i-2, j-2}:emul(self.dx) + self.umin end)
+	--]]
+	
+	self.gs = self.geom and self.geom.calc_gs and self.geom:calc_gs() 
+		or self.size:lambda(function(i,j) return matrix{n,n}:ident() end)
 	self.gUs = self.size:lambda(function(i,j)
 		return self.gs[i][j]:inv()
 	end)
@@ -139,9 +169,14 @@ function App:initGL()
 			return s
 		end)
 	end)
-	
-	self:testExact()
-	
+
+	print(self.geom.coords[1]..': '..matrix{self.size[1]}:lambda(function(i) return self.xs[i][1][1] end))
+	print(self.geom.coords[2]..': '..matrix{self.size[2]}:lambda(function(i) return self.xs[1][i][2] end))
+
+	if self.geom then
+		self.geom:testExact()
+	end
+
 	-- embedded space position
 	self.Xs = self.size:lambda(function(i,j)
 		return matrix{n}:zeros()
@@ -150,8 +185,10 @@ function App:initGL()
 		return matrix{n,n}:zeros()
 	end)
 	
-	local i,j = (self.size/2):map(math.floor):unpack()
+	--local i,j = (self.size/2):map(math.floor):unpack()
+	local i,j = 2,2 
 	self.es[i][j] = matrix{n,n}:lambda(function(i,j) return i == j and 1 or 0 end)
+	
 	-- now to reconstruct the es based on the conns ...
 	-- [=[ flood fill 
 	local todo = table{ matrix{i,j} }
@@ -190,19 +227,27 @@ function App:initGL()
 					
 					local e = matrix(eOrig)
 					local X = matrix(XOrig)
-				
+	
+					print()
+					print('index='..index)
+					print('nextIndex='..nextIndex)
+					print('x='..self.xs[i][j])
+					print('e='..e)
+					print('conn[k]='..connk)
+
 					--[[ forward-euler
-					e = e + (connk * e) * ds
+					e = e + (e * connk) * ds
 					X = X + e(_,k) * ds
 					--]]
 					-- [[ rk4 ...
 					e = int_rk4(0, e, function(s, e)
 						local f = s / ds
 						-- treating connections as constant
-						return connk * e
+						--return connk * e
 						-- interpolating connections between cells
-						--local conn = nextConnK * f + connk * (1 - f)
-						--return conn * e
+						-- (notice, when integrating polar coordinates around theta, r remains constant, and so do the connection coefficients)
+						local conn = nextConnK * f + connk * (1 - f)
+						return e * connk
 					end, ds)
 					
 					X = int_rk4(0, X, function(s, X)
@@ -213,13 +258,110 @@ function App:initGL()
 						return e(_,k) * f + eOrig(_,k) * (1 - f)
 					end, ds)
 					--]]
-					-- if d/ds e = conn e then ...
-					-- then we can solve this as a linear dynamic system!
-					-- even though this assumes conn is constant (which it's not)
 					--[[
-					e = int_rk4(s, e, function(s, e)
-						return connk * e
-					end, ds)
+					do
+						-- if d/ds e = conn e then ...
+						-- then we can solve this as a linear dynamic system!
+						-- even though this assumes conn is constant (which it's not)
+						-- for constant connections (like integrating polar coordinates around theta) this is no problem
+						-- de/e = conn ds
+						-- e = C exp(conn s) = C Q exp(λ s) Q^-1
+						--
+						-- 2D eigenvalues
+						-- (a-λ)(d-λ) - bc = 0 <=> λ^2 - (a+d) λ + (ad-bc) = 0 <=> λ = 1/2 ( (a+d) +- sqrt( a^2 + 2ad + d^2 - 4 (ad - bc) ) )
+						-- λ = (a+d)/2 +- sqrt( ((a-d)/2)^2 + bc ) )
+						--print('conn '..self.geom.coords[k]..':\n'..connk)
+						local a,b = connk[1]:unpack()
+						local c,d = connk[2]:unpack()
+						local asym = (a - d) / 2
+						local discr = asym^2 + b * c
+
+						-- [a b]
+						-- [c a]
+						if a == d and b ~= 0 and c ~= 0 then
+							if b * c >= 0 then
+								local l1, l2 = a + sd, a - sd
+								local evR = matrix{{1, 1}, {math.sqrt(c/b), -math.sqrt(c/b)}}
+								local evL = matrix{{1, math.sqrt(b/c)}, {1, -math.sqrt(b/c)}} / 2
+								e = e * evR * matrix{
+									{math.exp(ds * l1), 0},
+									{0, math.exp(ds * l2)}
+								} * evL
+							else
+								-- b c < = means either b or c < 0 but not both
+								local theta = math.sqrt(-b * c)
+								local ratio = math.sqrt(-b / c)
+								local costh = math.cos(theta * ds)
+								local sinth = math.sin(theta * ds)
+								e = e * matrix{
+									{costh, sinth / ratio},
+									{-sinth / ratio, costh}
+								} * math.exp(a * ds)
+							end
+						-- [a b]
+						-- [0 a] for a real and b nonzero 
+						elseif a == d and b ~= 0 then
+							-- TODO solve this without eigen-decomposition
+							error("defective matrix "..connk)
+						-- [a 0]
+						-- [0 d] for a,b any real
+						elseif b == 0 and c == 0 then
+							local l1, l2 = a, d
+							local evR = matrix{{1,0},{0,1}}
+							local evL = matrix(evR)
+							e = e * evR * matrix{
+								{math.exp(ds * l1), 0},
+								{0, math.exp(ds * l2)}
+							} * evL
+						-- [a b]
+						-- [0 d]
+						elseif c == 0 then
+							local l1, l2 = a, d
+							local evR = matrix{{1, 0}, {b, d-a}}:T()
+							local evL = matrix{{1, b/(a-d)}, {0, -1/(a-d)}}
+							e = e * evR * matrix{
+								{math.exp(ds * l1), 0},
+								{0, math.exp(ds * l2)}
+							} * evL
+						-- [a 0]
+						-- [c d]
+						elseif b == 0 then
+							local l1, l2 = a, d
+							local evR = matrix{{a-d, c}, {0, 1}}:T()
+							local evL = matrix{{1/(a-d), 0}, {-c/(a-d), 1}}
+							e = e * evR * matrix{
+								{math.exp(ds * l1), 0},
+								{0, math.exp(ds * l2)}
+							} * evL
+						elseif discr == 0 then	-- means (a-d)^2 = 4*b*c, then we have multiplicity 2
+							error"here"
+						elseif discr > 0 then
+							-- 2D eigenvectors using the smaller eigenvalue
+							-- [a-λ, b]    [ a - (a+d)/2 + sqrt( ((a-d)/2)^2 + bc ),    b ]    [ (a-d)/2 + sqrt( ((a-d)/2)^2 + bc ), b ]
+							-- [c, d-λ] => [ c,    d - (a+d)/2 + sqrt( ((a-d)/2)^2 + bc ) ] => [ c, (d-a)/2 + sqrt( ((a-d)/2)^2 + bc ) ]
+							--
+							-- [ (sqrt( ((a-d)/2)^2 + bc ) + (a-d)/2)(sqrt( ((a-d)/2)^2 + bc ) - (a-d)/2), b((d-a)/2 + sqrt( ((a-d)/2)^2 + bc )) ]
+							-- [ b c, b((d-a)/2 + sqrt( ((d-a)/2)^2 + bc )) ]
+							--
+							-- c x + ((d-a)/2 + sqrt( ((a-d)/2)^2 + bc )) y = 0
+							-- y = t
+							-- x = 1/c ((a-d)/2 - sqrt( ((a-d)/2)^2 + bc )) t
+							local avg = (a + d) / 2
+							local sd = complex.sqrt(discr) 
+							local l1, l2 = avg + sd, avg - sd
+							local evR = matrix{{asym + sd, asym - sd}, {c, c}}
+							local evL = matrix{
+								{-1, (asym + sd)/c},
+								{1, (-asym + sd)/c},
+							} / (2 * sd)
+							e = e * evR * matrix{
+								{math.exp(ds * l1), 0},
+								{0, math.exp(ds * l2)}
+							} * evL
+						else -- discr < 0	-- complex eigenvectors
+							error"here"
+						end
+					end
 					--]]
 					
 					--[[ normalize columns
@@ -233,9 +375,9 @@ function App:initGL()
 					self.es[ni][nj] = e
 					self.Xs[ni][nj] = X
 
-print('e2 from '..eOrig(_,2)..' to '..e(_,2)..' changing by '..(eOrig(_,2) - e(_,2)):norm())
-print('|e2| from '..eOrig(_,2):norm()..' to '..e(_,2):norm()..' changing by '..(e(_,2):norm() - eOrig(_,2):norm()))
-print('X from '..XOrig..' to '..X..' changing by '..(X - XOrig):norm())
+--print('e2 from '..eOrig(_,2)..' to '..e(_,2)..' changing by '..(eOrig(_,2) - e(_,2)):norm())
+--print('|e2| from '..eOrig(_,2):norm()..' to '..e(_,2):norm()..' changing by '..(e(_,2):norm() - eOrig(_,2):norm()))
+--print('X from '..XOrig..' to '..X..' changing by '..(X - XOrig):norm())
 					
 					todo:insert(nextIndex)
 					--todo:insert(math.random(#todo+1), nextIndex)
