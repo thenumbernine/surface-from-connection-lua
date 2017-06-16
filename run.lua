@@ -4,6 +4,7 @@ local bit = require 'bit'
 local gl = require 'gl'
 local matrix = require 'matrix'
 local complex = require 'symmath.complex'
+local symmath = require 'symmath'
 local gnuplot = require 'gnuplot'
 local ImGuiApp = require 'imguiapp'
 local View = require 'glapp.view'
@@ -55,6 +56,20 @@ local Geometry = class()
 
 function Geometry:init(app)
 	self.app = app
+
+	local Tensor = symmath.Tensor
+	if self.coordVars then
+		Tensor.coords{{variables=self.coordVars}}
+		local g = self:createMetric()
+		local gU = Tensor('^ab', table.unpack( (symmath.Matrix.inverse(g)) ))
+		local dg = Tensor('_abc', table.unpack(g'_ab,c'()))
+		local ConnL = Tensor('_abc', table.unpack( ((dg'_abc' + dg'_acb' - dg'_bca')/2)() ))
+		local Conn = Tensor('^a_bc', table.unpack( (gU'^ad' * ConnL'_dbc')() ))	
+		self.calc = {
+			g = self:compileTensor(g),
+			Conn = self:compileTensor(Conn),
+		}
+	end
 end
 
 function Geometry:testExact()
@@ -79,27 +94,51 @@ function Geometry:testExact()
 	print('max Γ^a_bc |analytic - numeric|', z:normLInf())
 end
 
+function Geometry:compileTensor(expr)
+	local size = table.map(expr:dim(), function(i) return i.value end)
+	local fs = matrix(size):lambda(function(...)
+		return expr[{...}]:compile(self.coordVars)
+	end)
+	return function(x)
+		return matrix(size):lambda(function(...)
+			return fs[{...}]( table.unpack(x) )
+		end)
+	end
+end
+
 
 local PolarHolGeom = class(Geometry)
-
+	
 PolarHolGeom.coords = {'r', 'θ'}
+PolarHolGeom.coordVars = {symmath.vars('r', 'theta')}
 
 PolarHolGeom.umin = matrix{1, 0}
-PolarHolGeom.umax = matrix{2, 2 * math.pi}
+PolarHolGeom.umax = matrix{3, 2 * math.pi}
+
+function PolarHolGeom:createMetric()
+	local r, theta = table.unpack(self.coordVars)
+	return symmath.Tensor('_ab', {1, 0}, {0, r^2})
+end
 
 function PolarHolGeom:calc_gs()
 	local app = self.app
 	return app.size:lambda(function(i,j)
-		local r = self.app.xs[i][j][1]
-		return matrix{{1,0},{0,r^2}}
+		-- manually
+		--local r = self.app.xs[i][j][1]
+		--return matrix{{1,0},{0,r^2}}
+		-- automatically 
+		return self.calc.g(self.app.xs[i][j])
 	end)
 end
 
 function PolarHolGeom:calc_conns()
 	return self.app.size:lambda(function(i,j)
-		local r = self.app.xs[i][j][1]
+		-- manually
+		--local r = self.app.xs[i][j][1]
 		-- 1/Γ^θ_θr = 1/Γ^θ_rθ = -Γ^r_θθ = r
-		return matrix{ {{0,0},{0,-r}}, {{0,1/r},{1/r,0}} }
+		--return matrix{ {{0,0},{0,-r}}, {{0,1/r},{1/r,0}} }
+		-- automatically
+		return self.calc.Conn(self.app.xs[i][j])
 	end)
 end
 
@@ -119,7 +158,7 @@ function PolarNonHolGeom:calc_conns()
 end
 
 function App:initGL()
-	self.size = matrix{4,16}
+	self.size = matrix{5,16}
 		
 	self.geom = PolarHolGeom(self)
 	--self.geom = PolarNonHolGeom(self)
@@ -188,7 +227,7 @@ function App:initGL()
 	--local i,j = (self.size/2):map(math.floor):unpack()
 	local i,j = 2,2 
 	self.es[i][j] = matrix{n,n}:lambda(function(i,j) return i == j and 1 or 0 end)
-	
+
 	-- now to reconstruct the es based on the conns ...
 	-- [=[ flood fill 
 	local todo = table{ matrix{i,j} }
@@ -202,8 +241,7 @@ function App:initGL()
 		local x = self.xs[i][j]
 		local g = self.gs[i][j]	
 		local _ = matrix.index
-		--for k=1,n do
-		for k=1,2 do
+		for k=1,n do
 			local connk = conn(_,_,k)
 	
 			for dir=-1,1,2 do 
@@ -233,7 +271,7 @@ function App:initGL()
 					e = e + (e * connk) * ds
 					X = X + e(_,k) * ds
 					--]]
-					--[[ rk4 ...
+					-- [[ rk4 ...
 					e = int_rk4(0, e, function(s, e)
 						local f = s / ds
 						-- treating connections as constant
@@ -252,7 +290,7 @@ function App:initGL()
 						return e(_,k) * f + eOrig(_,k) * (1 - f)
 					end, ds)
 					--]]
-					-- [[
+					--[[
 					do
 						-- if d/ds e = conn e then ...
 						-- then we can solve this as a linear dynamic system!
@@ -383,9 +421,7 @@ function App:initGL()
 					e = e:T()
 					--]]
 
-					if k == 1 
-					or (k == 2 and j == 3)
-					then
+					if ni == 3 then
 						print()
 						print('index='..index)
 						--print('self.dx='..self.dx)
@@ -410,6 +446,7 @@ function App:initGL()
 					--todo:insert(nextIndex)
 					--todo:insert(math.random(#todo+1), nextIndex)
 					--todo:insert(math.floor((#todo+1)/2), nextIndex)
+					-- the linear dynamic system method only works right for polar coordinates when we use this order
 					todo:insert(1, nextIndex)
 				end
 			end	
