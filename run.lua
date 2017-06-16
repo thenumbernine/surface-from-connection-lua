@@ -267,19 +267,20 @@ function App:initGL()
 					local e = matrix(eOrig)
 					local X = matrix(XOrig)
 
+					-- (notice, when integrating polar coordinates around theta, r remains constant, and so do the connection coefficients)
+					
 					--[[ forward-euler
 					e = e + (e * connk) * ds
 					X = X + e(_,k) * ds
 					--]]
 					-- [[ rk4 ...
 					e = int_rk4(0, e, function(s, e)
-						local f = s / ds
 						-- treating connections as constant
-						--return connk * e
+						--return e * connk
 						-- interpolating connections between cells
-						-- (notice, when integrating polar coordinates around theta, r remains constant, and so do the connection coefficients)
-						local conn = nextConnK * f + connk * (1 - f)
-						return e * connk
+						--return e * (nextConnK * s + connk * (ds - s)) / ds
+						-- using analytical solution
+						return e * self.geom.calc.Conn(x + dx * s)(_,k)
 					end, ds)
 					
 					X = int_rk4(0, X, function(s, X)
