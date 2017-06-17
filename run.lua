@@ -158,7 +158,7 @@ function PolarNonHolGeom:calc_conns()
 end
 
 function App:initGL()
-	self.size = matrix{5,16}
+	self.size = matrix{16,16}
 		
 	self.geom = PolarHolGeom(self)
 	--self.geom = PolarNonHolGeom(self)
@@ -259,7 +259,8 @@ function App:initGL()
 					-- ds = sqrt(g_ab dx^a dx^b) 
 					local dx = matrix{n}:zeros()
 					dx[k] = dir * self.dx[k]
-					local ds = math.sqrt(dx * g * dx)
+					--local ds = math.sqrt(dx * g * dx)
+					ds = dx[k]
 				
 					local eOrig = self.es[i][j]
 					local XOrig = self.Xs[i][j]
