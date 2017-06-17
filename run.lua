@@ -27,9 +27,16 @@ end
 local App = class(Orbit(View.apply(ImGuiApp)))
 
 App.title = 'reconstruct surface from geodesics' 
-App.viewDist = 1
+App.viewDist = 10
 
 --matrix.__tostring = tolua
+
+function matrix:ident()
+	assert(#self == 2 and self:degree() == 1)
+	return self:lambda(function(i,j)
+		return i == j and 1 or 0
+	end)
+end
 
 function matrix:inv()
 	local size = self:size()
@@ -56,9 +63,15 @@ local Geometry = class()
 
 function Geometry:init(app)
 	self.app = app
+	self.umin = matrix(self.umin)
+	self.umax = matrix(self.umax)
+
+	self.coordVars = table.map(self.coords, function(name)
+		return symmath.var(name)
+	end)
 
 	local Tensor = symmath.Tensor
-	if self.coordVars then
+	do --if self.coordVars then
 		Tensor.coords{{variables=self.coordVars}}
 		local g = self:createMetric()
 		local gU = Tensor('^ab', table.unpack( (symmath.Matrix.inverse(g)) ))
@@ -85,8 +98,8 @@ function Geometry:testExact()
 	gnuplot{
 		output = 'conn numeric vs analytic.png',
 		style = 'data lines',
-		xlabel = self.coords[1],
-		ylabel = self.coords[2],
+		xlabel = self.coords and self.coords[1] or 'x^1',
+		ylabel = self.coords and self.coords[2] or 'x^2',
 		--log = 'z',
 		griddata = {x = x, y = y, z},
 		{splot=true, using='1:2:3', title = 'Γ^a_b_c |analytic - numeric|'},
@@ -106,41 +119,35 @@ function Geometry:compileTensor(expr)
 	end
 end
 
+function Geometry:calc_gs()
+	if not self.calc.g then return end
+	local app = self.app
+	return app.size:lambda(function(i,j)
+		return self.calc.g(self.app.xs[i][j])
+	end)
+end
+
+function Geometry:calc_conns()
+	if not self.calc.Conn then return end
+	return self.app.size:lambda(function(i,j)
+		return self.calc.Conn(self.app.xs[i][j])
+	end)
+end
+
+
+-- 2D geometries
+
 
 local PolarHolGeom = class(Geometry)
-	
 PolarHolGeom.coords = {'r', 'θ'}
-PolarHolGeom.coordVars = {symmath.vars('r', 'theta')}
-
 PolarHolGeom.umin = matrix{1, 0}
-PolarHolGeom.umax = matrix{3, 2 * math.pi}
-
+PolarHolGeom.umax = matrix{10, 2 * math.pi}
+PolarHolGeom.startIndex = {2,2}
 function PolarHolGeom:createMetric()
 	local r, theta = table.unpack(self.coordVars)
 	return symmath.Tensor('_ab', {1, 0}, {0, r^2})
 end
 
-function PolarHolGeom:calc_gs()
-	local app = self.app
-	return app.size:lambda(function(i,j)
-		-- manually
-		--local r = self.app.xs[i][j][1]
-		--return matrix{{1,0},{0,r^2}}
-		-- automatically 
-		return self.calc.g(self.app.xs[i][j])
-	end)
-end
-
-function PolarHolGeom:calc_conns()
-	return self.app.size:lambda(function(i,j)
-		-- manually
-		--local r = self.app.xs[i][j][1]
-		-- 1/Γ^θ_θr = 1/Γ^θ_rθ = -Γ^r_θθ = r
-		--return matrix{ {{0,0},{0,-r}}, {{0,1/r},{1/r,0}} }
-		-- automatically
-		return self.calc.Conn(self.app.xs[i][j])
-	end)
-end
 
 -- The thing about non-holonomic geometry is
 -- it needs commutation coefficients as well.
@@ -151,20 +158,63 @@ local PolarNonHolGeom = class(Geometry)
 
 function PolarNonHolGeom:calc_conns()
 	return self.app.size:lambda(function(i,j)
-		local r = app.xs[i][j][1]
+		local r = self.app.xs[i][j][1]
 		-- Γ^θ_rθ = -Γ^r_θθ = 1/r
 		return matrix{ {{0,0},{0,-1/r}}, {{0,1/r},{0,0}} }
 	end)
 end
 
+
+-- cyl surface can't be reconstructed
+-- because it needs extrinsic curvature information
+-- it has a connection of zero
+
+
+-- sphere surface likewise is 2 dimensions inside 3 dimensions
+local SphereSurfaceHolGeom = class(Geometry)
+SphereSurfaceHolGeom.coords = {'θ', 'phi'}
+SphereSurfaceHolGeom.umin = matrix{0, 0}
+SphereSurfaceHolGeom.umax = matrix{math.pi, 2*math.pi}
+SphereSurfaceHolGeom.startIndex = {14,14}	-- n-2,n-2
+function SphereSurfaceHolGeom:createMetric()
+	local theta, phi = table.unpack(self.coordVars)
+	local r = 1
+	return symmath.Tensor('_ab', {r^2, 0}, {0, r^2 * symmath.sin(theta)^2})
+end
+
+
+-- 3D geometries
+
+
+local CylHolGeom = class(Geometry)
+CylHolGeom.coords = {'r', 'θ', 'z'}
+CylHolGeom.umin = {1, 0, -5}
+CylHolGeom.umax = {10, 2*math.pi, 5}
+CylHolGeom.startIndex = {2,2}
+function CylHolGeom:createMetric()
+	local r, theta, z = table.unpack(self.coordVars)
+	return symmath.Tensor('_ab', {1, 0, 0}, {0, r^2, 0}, {0, 0, 1})
+end
+
+local function I(x)
+	return function()
+		return x
+	end
+end
+
 function App:initGL()
-	self.size = matrix{16,16}
-		
-	self.geom = PolarHolGeom(self)
+	-- 2D
+	--self.geom = SphereSurfaceHolGeom(self)
+	--self.geom = PolarHolGeom(self)
 	--self.geom = PolarNonHolGeom(self)
+	-- 3D
+	self.geom = CylHolGeom(self)
 	
-	self.umin = self.geom and self.geom.umin or matrix{-1, -1}
-	self.umax = self.geom and self.geom.umax or matrix{1, 1}
+	local n = #self.geom.coords
+	self.size = matrix{n}:lambda(I(16))
+
+	self.umin = self.geom and self.geom.umin or matrix{n}:lambda(I(-1))
+	self.umax = self.geom and self.geom.umax or matrix{n}:lambda(I(1))
 	
 	local n = #self.size
 	
@@ -174,20 +224,21 @@ function App:initGL()
 	--]]
 	-- [[ vertex centered, excluding borders, so position 2,2 is at umin (useful for centering the corner vertex)
 	self.dx = matrix{n}:ones():emul(self.umax - self.umin):ediv(self.size-3)
-	self.xs = self.size:lambda(function(i,j) return matrix{i-2, j-2}:emul(self.dx) + self.umin end)
+	self.xs = self.size:lambda(function(...) return (matrix{...}-2):emul(self.dx) + self.umin end)
 	--]]
 	
 	self.gs = self.geom and self.geom.calc_gs and self.geom:calc_gs() 
-		or self.size:lambda(function(i,j) return matrix{n,n}:ident() end)
-	self.gUs = self.size:lambda(function(i,j)
-		return self.gs[i][j]:inv()
+		or self.size:lambda(function(...) return matrix{n,n}:ident() end)
+	self.gUs = self.size:lambda(function(...)
+		return self.gs[{...}]:inv()
 	end)
-	self.dgs = self.size:lambda(function(i,j)
+	self.dgs = self.size:lambda(function(...)
+		local i = matrix{...}
 		-- dg_abc = dg_bc/dx^a
 		local dg = matrix{n}:lambda(function(a)
 			-- using a constant border
-			local ip = matrix{i,j} ip[a] = math.min(ip[a]+1, self.size[a])
-			local im = matrix{i,j} im[a] = math.max(im[a]-1, 1)
+			local ip = matrix(i) ip[a] = math.min(ip[a]+1, self.size[a])
+			local im = matrix(i) im[a] = math.max(im[a]-1, 1)
 			-- using a first-order derivative
 			return (self.gs[ip] - self.gs[im]) / (self.xs[ip][a] - self.xs[im][a])
 		end)
@@ -200,46 +251,44 @@ function App:initGL()
 			return .5 * (dg[a][b][c] + dg[a][c][b] - dg[b][c][a])
 		end)
 		local gU = self.gUs[i][j]
-		return matrix{n,n,n}:lambda(function(a,b,c)
+		local check1 = gU * numConnLower
+		local check2 = matrix{n,n,n}:lambda(function(a,b,c)
 			local s = 0
 			for d=1,n do
 				s = s + gU[a][d] * numConnLower[d][b][c]
 			end
 			return s
 		end)
+		assert((check1 - check2):norm() == 0)
+		return check2
 	end)
-
-	print(self.geom.coords[1]..': '..matrix{self.size[1]}:lambda(function(i) return self.xs[i][1][1] end))
-	print(self.geom.coords[2]..': '..matrix{self.size[2]}:lambda(function(i) return self.xs[1][i][2] end))
 
 	if self.geom then
 		self.geom:testExact()
 	end
 
 	-- embedded space position
-	self.Xs = self.size:lambda(function(i,j)
+	self.Xs = self.size:lambda(function(...)
 		return matrix{n}:zeros()
 	end)
-	self.es = self.size:lambda(function(i,j)
+	self.es = self.size:lambda(function(...)
 		return matrix{n,n}:zeros()
 	end)
 	
-	--local i,j = (self.size/2):map(math.floor):unpack()
-	local i,j = 2,2 
-	self.es[i][j] = matrix{n,n}:lambda(function(i,j) return i == j and 1 or 0 end)
+	local i = matrix(self.geom.startIndex)
+	self.es[i] = matrix{n,n}:ident()
 
 	-- now to reconstruct the es based on the conns ...
 	-- [=[ flood fill 
-	local todo = table{ matrix{i,j} }
+	local todo = table{i}
 	local sofar = table()
 	while #todo > 0 do
 		local index = todo:remove(1)
 		sofar:insert(index)
-		local i,j = index:unpack()
-		local conn = self.conns[i][j]
+		local conn = self.conns[index]
 		-- for each direction ...
-		local x = self.xs[i][j]
-		local g = self.gs[i][j]	
+		local x = self.xs[index]
+		local g = self.gs[index]	
 		local _ = matrix.index
 		for k=1,n do
 			local connk = conn(_,_,k)
@@ -254,7 +303,7 @@ function App:initGL()
 				and not table.find(sofar, nextIndex) 
 				and not table.find(todo, nextIndex)
 				then
-					local nextConnK = self.conns[ni][nj](_,_,k)
+					local nextConnK = self.conns[nextIndex](_,_,k)
 					
 					-- ds = sqrt(g_ab dx^a dx^b) 
 					local dx = matrix{n}:zeros()
@@ -262,8 +311,8 @@ function App:initGL()
 					--local ds = math.sqrt(dx * g * dx)
 					ds = dx[k]
 				
-					local eOrig = self.es[i][j]
-					local XOrig = self.Xs[i][j]
+					local eOrig = self.es[index]
+					local XOrig = self.Xs[index]
 					
 					local e = matrix(eOrig)
 					local X = matrix(XOrig)
@@ -279,9 +328,9 @@ function App:initGL()
 						-- treating connections as constant
 						--return e * connk
 						-- interpolating connections between cells
-						--return e * (nextConnK * s + connk * (ds - s)) / ds
+						return e * (nextConnK * s + connk * (ds - s)) / ds
 						-- using analytical solution
-						return e * self.geom.calc.Conn(x + dx * s)(_,k)
+						--return e * self.geom.calc.Conn(x + dx * s)(_,k)
 					end, ds)
 					
 					X = int_rk4(0, X, function(s, X)
@@ -423,38 +472,55 @@ function App:initGL()
 					e = e:T()
 					--]]
 
-					if ni == 3 then
-						print()
-						print('index='..index)
-						--print('self.dx='..self.dx)
-						print('nextIndex='..nextIndex)
-						print('dx='..dx)
-						print('ds='..ds)
-						print('x='..self.xs[i][j])
-						print('conn[k]='..connk)
-						print('XOrig='..XOrig)
-						print('X='..X)
-						print('eOrig='..eOrig)
-						print('e='..e)
-					end
+--[[
+print()
+print('index='..index)
+--print('self.dx='..self.dx)
+print('nextIndex='..nextIndex)
+print('dx='..dx)
+print('ds='..ds)
+print('x='..self.xs[index])
+print('conn[k]='..connk)
+print('XOrig='..XOrig)
+print('X='..X)
+print('eOrig='..eOrig)
+print('e='..e)
+--]]
 
-					self.es[ni][nj] = e
-					self.Xs[ni][nj] = X
+					self.es[nextIndex] = e
+					self.Xs[nextIndex] = X
 
 --print('e2 from '..eOrig(_,2)..' to '..e(_,2)..' changing by '..(eOrig(_,2) - e(_,2)):norm())
 --print('|e2| from '..eOrig(_,2):norm()..' to '..e(_,2):norm()..' changing by '..(e(_,2):norm() - eOrig(_,2):norm()))
 --print('X from '..XOrig..' to '..X..' changing by '..(X - XOrig):norm())
 					
-					--todo:insert(nextIndex)
+					todo:insert(nextIndex)
 					--todo:insert(math.random(#todo+1), nextIndex)
 					--todo:insert(math.floor((#todo+1)/2), nextIndex)
 					-- the linear dynamic system method only works right for polar coordinates when we use this order
-					todo:insert(1, nextIndex)
+					--todo:insert(1, nextIndex)
 				end
 			end	
 		end
 	end
 	--]]
+end
+
+local function glColor(m)
+	if #m == 2 then
+		gl.glColor3d(m[1], m[2], .5)
+	elseif #m == 3 then
+		gl.glColor3d(m:unpack())
+	else
+		error"can't color this many dimensions"
+	end
+end
+
+local function glVertex(m)
+	assert(({
+		[2] = gl.glVertex2d,
+		[3] = gl.glVertex3d,
+	})[#m])(m:unpack())
 end
 
 function App:update()
@@ -465,21 +531,17 @@ function App:update()
 
 	--gl.glColor3f(0,1,1)
 	gl.glBegin(gl.GL_LINES)
-	local size = self.size-1
-	for i=2,size[1] do
-		for j=2,size[2] do
-			-- show the parameter space 
-			if i < size[1] then
-				gl.glColor3f((i-1)/size[1], (j-1)/size[2], .5)
-				gl.glVertex2d(self.Xs[i][j]:unpack())
-				gl.glColor3f(i/size[1], (j-1)/size[2], .5)
-				gl.glVertex2d(self.Xs[i+1][j]:unpack())
-			end
-			if j < size[2] then
-				gl.glColor3f((i-1)/size[1], (j-1)/size[2], .5)
-				gl.glVertex2d(self.Xs[i][j]:unpack())
-				gl.glColor3f((i-1)/size[1], j/size[2], .5)
-				gl.glVertex2d(self.Xs[i][j+1]:unpack())
+	local sizeMinusOne = self.size-1
+	for indexMinusOne in (sizeMinusOne-1):range() do
+		local index = indexMinusOne+1
+		for k=1,n do
+			if index[k] < sizeMinusOne[k] then
+				local nextIndex = matrix(index)
+				nextIndex[k] = nextIndex[k] + 1
+				glColor((index-1):ediv(sizeMinusOne))
+				glVertex(self.Xs[index])
+				glColor((nextIndex-1):ediv(sizeMinusOne))
+				glVertex(self.Xs[nextIndex])
 			end
 		end
 	end
@@ -496,19 +558,14 @@ function App:update()
 	gl.glPushMatrix()
 	gl.glTranslatef(0,0,.1 * scale)
 	gl.glBegin(gl.GL_LINES)
-	for i=2,self.size[1]-1 do
-		for j=2,self.size[2]-1 do
-			local u = self.Xs[i][j]
-			local e = self.es[i][j]:T()
-			for k=1,n do
-				gl.glColor3f(colors[k]:unpack()) -- color by axis	
-				gl.glVertex2d(u:unpack())
-				local ek = e[k]
-				--[[ normalize or not
-				ek = ek / ek:norm()
-				--]]
-				gl.glVertex2d((u + scale * ek):unpack())
-			end
+	for indexMinusOne in sizeMinusOne:range() do
+		local index = indexMinusOne+1
+		local u = self.Xs[index]
+		local e = self.es[index]:T()
+		for k=1,n do
+			glColor(colors[k])
+			glVertex(u)
+			glVertex(u + scale * e[k])
 		end
 	end
 	gl.glEnd()
