@@ -24,11 +24,66 @@ local function int_rk4(r, q, dq_dr, dr)
 end
 
 
-local App = class(Orbit(View.apply(ImGuiApp)))
+local function permutations(args)
+	local parity = args.parity or (#args.elements%2==0 and 1 or -1)
+	local p = args.elements
+	local callback = args.callback
+	local index = args.index
+	if args.size then
+		if index and #index == args.size then
+			return callback(index, parity)
+		end
+	else
+		if #p == 0 then
+			return callback(index, parity)
+		end
+	end
+	for i=1,#p do
+		local subset = table(p)
+		local subindex = table(index)
+		subindex:insert(subset:remove(i))
+		parity = parity * -1		-- TODO times -1 or times the distance of the swap?
+		if permutations{
+			elements = subset, 
+			callback = callback, 
+			index = subindex,
+			size = args.size,
+			parity = parity,
+		} then 
+			return true 
+		end
+	end
+end
 
-App.title = 'reconstruct surface from geodesics' 
-App.viewDist = 10
+function matrix.det(m)
+	local dim = m:size()
+	local volume = table.combine(dim, function(a,b) return a * b end) or 0
+	if volume == 0 then return 1 end
+	if #dim ~= 2 then error("determinant only works on degree-2 matrices") end
+	if dim[1] ~= dim[2] then error("determinant only works on square matrices") end
 
+	local n = dim[1]
+	if n == 1 then return m[1][1] end
+
+	-- any further -- use recursive case
+	local result = 0
+	permutations{
+		elements = range(n),
+		callback = function(index, parity)
+			local product
+			for i=1,n do
+				local entry = m[i][index[i]]
+				if not product then
+					product = entry
+				else
+					product = product * entry
+				end
+			end
+			result = result + parity * product
+		end,
+	}
+	return result
+end
 --matrix.__tostring = tolua
 
 function matrix:ident()
@@ -37,6 +92,10 @@ function matrix:ident()
 		return i == j and 1 or 0
 	end)
 end
+
+local m = matrix{{1,2},{2,3}}
+print(m:det())
+os.exit()
 
 function matrix:inv()
 	local size = self:size()
@@ -51,11 +110,19 @@ function matrix:inv()
 			{d, -b},
 			{-c, a}
 		} / det
+--[[
+	elseif n == 3 then
+		-- transpose, +-+- sign stagger, for each element remove that row and column and 
+		return matrix{
+			{self[2][2]*self[3][3]-self[2][3]*self[3][2], self[1][3]*self[3][2]-self[1][2]*self[3][3], self[1][2]*self[2][3]-self[1][3]*self[2][2]},
+			{self[2][3]*self[3][1]-self[2][1]*self[3][3], self[1][1]*self[3][3]-self[1][3]*self[3][1], self[1][3]*self[2][1]-self[1][1]*self[2][3]},
+			{self[2][1]*self[3][2]-self[2][2]*self[3][1], self[1][2]*self[3][1]-self[1][1]*self[3][2], self[1][1]*self[2][2]-self[1][2]*self[2][1]},
+		} / self:det()
+--]]
 	else
 		error"idk how to invert this"
 	end
 end
-
 
 -- used for providing initial values for the metric
 -- and verifying accuracy of numerical calculations
@@ -122,15 +189,15 @@ end
 function Geometry:calc_gs()
 	if not self.calc.g then return end
 	local app = self.app
-	return app.size:lambda(function(i,j)
-		return self.calc.g(self.app.xs[i][j])
+	return app.size:lambda(function(...)
+		return self.calc.g(self.app.xs[{...}])
 	end)
 end
 
 function Geometry:calc_conns()
 	if not self.calc.Conn then return end
-	return self.app.size:lambda(function(i,j)
-		return self.calc.Conn(self.app.xs[i][j])
+	return self.app.size:lambda(function(...)
+		return self.calc.Conn(self.app.xs[{...}])
 	end)
 end
 
@@ -201,6 +268,12 @@ local function I(x)
 		return x
 	end
 end
+
+
+local App = class(Orbit(View.apply(ImGuiApp)))
+
+App.title = 'reconstruct surface from geodesics' 
+App.viewDist = 10
 
 function App:initGL()
 	-- 2D
