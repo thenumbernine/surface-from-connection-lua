@@ -2,6 +2,7 @@
 require 'ext'
 local bit = require 'bit'
 local gl = require 'gl'
+local glCall = require 'gl.call'
 local matrix = require 'matrix'
 local complex = require 'symmath.complex'
 local symmath = require 'symmath'
@@ -93,10 +94,6 @@ function matrix:ident()
 	end)
 end
 
-local m = matrix{{1,2},{2,3}}
-print(m:det())
-os.exit()
-
 function matrix:inv()
 	local size = self:size()
 	assert(#size == 2, "must be a matrix, not a vector or higher dimension array")
@@ -110,7 +107,6 @@ function matrix:inv()
 			{d, -b},
 			{-c, a}
 		} / det
---[[
 	elseif n == 3 then
 		-- transpose, +-+- sign stagger, for each element remove that row and column and 
 		return matrix{
@@ -118,7 +114,6 @@ function matrix:inv()
 			{self[2][3]*self[3][1]-self[2][1]*self[3][3], self[1][1]*self[3][3]-self[1][3]*self[3][1], self[1][3]*self[2][1]-self[1][1]*self[2][3]},
 			{self[2][1]*self[3][2]-self[2][2]*self[3][1], self[1][2]*self[3][1]-self[1][1]*self[3][2], self[1][1]*self[2][2]-self[1][2]*self[2][1]},
 		} / self:det()
---]]
 	else
 		error"idk how to invert this"
 	end
@@ -140,7 +135,8 @@ function Geometry:init(app)
 	local Tensor = symmath.Tensor
 	do --if self.coordVars then
 		Tensor.coords{{variables=self.coordVars}}
-		local g = self:createMetric()
+		local n = #self.coords
+		local g = self.createMetric and self:createMetric() or Tensor('_ab', table.unpack(symmath.Matrix.identity(n,n)))
 		local gU = Tensor('^ab', table.unpack( (symmath.Matrix.inverse(g)) ))
 		local dg = Tensor('_abc', table.unpack(g'_ab,c'()))
 		local ConnL = Tensor('_abc', table.unpack( ((dg'_abc' + dg'_acb' - dg'_bca')/2)() ))
@@ -209,7 +205,7 @@ local PolarHolGeom = class(Geometry)
 PolarHolGeom.coords = {'r', 'θ'}
 PolarHolGeom.umin = matrix{1, 0}
 PolarHolGeom.umax = matrix{10, 2 * math.pi}
-PolarHolGeom.startIndex = {2,2}
+PolarHolGeom.startIndex = {2,2}	-- initialize our basis of e=I at r=1, otherwise the shape gets messed up
 function PolarHolGeom:createMetric()
 	local r, theta = table.unpack(self.coordVars)
 	return symmath.Tensor('_ab', {1, 0}, {0, r^2})
@@ -222,7 +218,9 @@ end
 -- to get to the next coordinate location?
 -- This information is typically stored in the metric of the holonomic coordinate map.
 local PolarNonHolGeom = class(Geometry)
-
+PolarNonHolGeom.coords = {'r', 'θ'}
+PolarNonHolGeom.umin = matrix{1, 0}
+PolarNonHolGeom.umax = matrix{10, 2 * math.pi}
 function PolarNonHolGeom:calc_conns()
 	return self.app.size:lambda(function(i,j)
 		local r = self.app.xs[i][j][1]
@@ -257,7 +255,7 @@ local CylHolGeom = class(Geometry)
 CylHolGeom.coords = {'r', 'θ', 'z'}
 CylHolGeom.umin = {1, 0, -5}
 CylHolGeom.umax = {10, 2*math.pi, 5}
-CylHolGeom.startIndex = {2,2}
+CylHolGeom.startIndex = {2,2,2}
 function CylHolGeom:createMetric()
 	local r, theta, z = table.unpack(self.coordVars)
 	return symmath.Tensor('_ab', {1, 0, 0}, {0, r^2, 0}, {0, 0, 1})
@@ -318,12 +316,13 @@ function App:initGL()
 		-- reorientate dg_abc = g_ab,c
 		return matrix{n,n,n}:lambda(function(a,b,c) return dg[c][a][b] end)
 	end)
-	self.conns = self.size:lambda(function(i,j)
-		local dg = self.dgs[i][j]
+	self.conns = self.size:lambda(function(...)
+		local i = matrix{...}
+		local dg = self.dgs[i]
 		local numConnLower = matrix{n,n,n}:lambda(function(a,b,c)
 			return .5 * (dg[a][b][c] + dg[a][c][b] - dg[b][c][a])
 		end)
-		local gU = self.gUs[i][j]
+		local gU = self.gUs[i]
 		local check1 = gU * numConnLower
 		local check2 = matrix{n,n,n}:lambda(function(a,b,c)
 			local s = 0
@@ -348,8 +347,16 @@ function App:initGL()
 		return matrix{n,n}:zeros()
 	end)
 	
-	local i = matrix(self.geom.startIndex)
+	local i = self.geom.startIndex
+		and matrix(self.geom.startIndex)
+		or matrix{n}:lambda(I(2))
 	self.es[i] = matrix{n,n}:ident()
+	local function withinEdge(index,size)
+		for i=1,n do
+			if index[i] <= 1 or index[i] >= size[i] then return false end
+		end
+		return true
+	end
 
 	-- now to reconstruct the es based on the conns ...
 	-- [=[ flood fill 
@@ -369,10 +376,8 @@ function App:initGL()
 			for dir=-1,1,2 do 
 				local nextIndex = matrix(index)
 				nextIndex[k] = nextIndex[k] + dir
-				local ni, nj = nextIndex:unpack()
 				-- skip the edges
-				if 2 <= ni and ni <= self.size[1]-1
-				and 2 <= nj and nj <= self.size[2]-1
+				if withinEdge(nextIndex, self.size)
 				and not table.find(sofar, nextIndex) 
 				and not table.find(todo, nextIndex)
 				then
@@ -602,47 +607,51 @@ function App:update()
 
 	local n = #self.size
 
-	--gl.glColor3f(0,1,1)
-	gl.glBegin(gl.GL_LINES)
-	local sizeMinusOne = self.size-1
-	for indexMinusOne in (sizeMinusOne-1):range() do
-		local index = indexMinusOne+1
-		for k=1,n do
-			if index[k] < sizeMinusOne[k] then
-				local nextIndex = matrix(index)
-				nextIndex[k] = nextIndex[k] + 1
-				glColor((index-1):ediv(sizeMinusOne))
-				glVertex(self.Xs[index])
-				glColor((nextIndex-1):ediv(sizeMinusOne))
-				glVertex(self.Xs[nextIndex])
+	self.list = self.list or {}
+	glCall(self.list, function()
+
+		--gl.glColor3f(0,1,1)
+		gl.glBegin(gl.GL_LINES)
+		local sizeMinusOne = self.size-1
+		for indexMinusOne in (sizeMinusOne-1):range() do
+			local index = indexMinusOne+1
+			for k=1,n do
+				if index[k] < sizeMinusOne[k] then
+					local nextIndex = matrix(index)
+					nextIndex[k] = nextIndex[k] + 1
+					glColor((index-1):ediv(sizeMinusOne))
+					glVertex(self.Xs[index])
+					glColor((nextIndex-1):ediv(sizeMinusOne))
+					glVertex(self.Xs[nextIndex])
+				end
 			end
 		end
-	end
-	gl.glEnd()
+		gl.glEnd()
 
-	local colors = matrix{
-		{1,0,0},
-		{0,1,0},
-		{0,0,1},
-	}
+		local colors = matrix{
+			{1,0,0},
+			{0,1,0},
+			{0,0,1},
+		}
 
-	local scale = .05
-	gl.glMatrixMode(gl.GL_MODELVIEW_MATRIX)
-	gl.glPushMatrix()
-	gl.glTranslatef(0,0,.1 * scale)
-	gl.glBegin(gl.GL_LINES)
-	for indexMinusOne in sizeMinusOne:range() do
-		local index = indexMinusOne+1
-		local u = self.Xs[index]
-		local e = self.es[index]:T()
-		for k=1,n do
-			glColor(colors[k])
-			glVertex(u)
-			glVertex(u + scale * e[k])
+		local scale = .05
+		gl.glMatrixMode(gl.GL_MODELVIEW_MATRIX)
+		gl.glPushMatrix()
+		gl.glTranslatef(0,0,.1 * scale)
+		gl.glBegin(gl.GL_LINES)
+		for indexMinusOne in sizeMinusOne:range() do
+			local index = indexMinusOne+1
+			local u = self.Xs[index]
+			local e = self.es[index]:T()
+			for k=1,n do
+				glColor(colors[k])
+				glVertex(u)
+				glVertex(u + scale * e[k])
+			end
 		end
-	end
-	gl.glEnd()
-	gl.glPopMatrix()
+		gl.glEnd()
+		gl.glPopMatrix()
+	end)
 end
 
 App():run()
