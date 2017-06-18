@@ -15,6 +15,9 @@ with no information about the background coordinate system.<br>
 <br>
 This is an attempt to reconstruct the surface of the coordinate space using only the numerical metric information.<br>
 I am integrating the basis vectors using the connection coefficients, and integrating the points in background coordinate space using the basis vectors.<br>
+<br>
+So far I can reconstruct any surface with no extrinsic curvature, provided the correct initial coordinates and basis are provided.<br>
+<br>
 
 <h2> Theory </h2>
 
@@ -94,9 +97,16 @@ So ${e_r}^I$ is constant,<br>
 and $\frac{\partial}{\partial r} {e_\theta}^I = \frac{1}{r} {e_\theta}^I$<br>
 $\frac{\partial {e_\theta}^I}{{e_\theta}^I} = \frac{\partial r}{r}$<br>
 ${e_\theta}^I = C r$<br>
-${e_\theta}^I(r) = {e_\theta}^I(r_0) \cdot r$<br>
+
+Initializing ${e_\theta}^I(r_0)$ at $r_0$ gives us<br>
+${e_\theta}^I(r_0) = C r_0$<br>
+which means<br>
+$C = \frac{1}{r_0} {e_\theta}^I(r_0)$<br>
+and gives us<br>
+${e_\theta}^I(r) = \frac{1}{r_0} {e_\theta}^I(r_0) \cdot r$<br>
 Viola, we see ${e_\theta}^I$ grows by $r$ as a function of $r$.<br>
 <br>
+
 Now the same trick when integrating by angle:<br>
 
 $\nabla_\theta {e_b}^I = {\Gamma^a}_{b\theta} {e_a}^I$<br>
@@ -110,26 +120,35 @@ $\pmatrix{ 0 & \frac{1}{r} \\ -r & 0} = \pmatrix{ 1 & 1 \\ -i r && i r} \pmatrix
 Therefore the matrix exponent can be calculated as<br>
 $exp( \theta \cdot \left[ {\Gamma^a}_{b\theta} \right] ) 
 = \pmatrix{ 1 & 1 \\ -i r && i r} \pmatrix{exp(-i \theta) & 0 \\ 0 & exp(i \theta)} \pmatrix{\frac{1}{2} & \frac{i}{2 r} \\ \frac{1}{2} & -\frac{i}{2r} }
-= \pmatrix{ cos \theta & sin \theta \\ -r sin \theta & r cos \theta}
+= \pmatrix{ cos \theta & \frac{1}{r} sin \theta \\ -r sin \theta & cos \theta}
 $<br>
-And we now get an equation for integrating our basis around $\theta$:
+And we now get an equation for integrating our basis around $\theta$:<br>
 $\pmatrix{ e_r \\ e_\theta }|_\theta = exp(\theta \cdot {\Gamma^a}_{b\theta} ) \cdot \pmatrix{ e_r \\ e_\theta}|_{\theta_0}$<br>
+$\pmatrix{ {e_r}^x & {e_r}^y \\ {e_\theta}^x & {e_\theta}^y }|_\theta 
+= \pmatrix{ cos \theta & \frac{1}{r} sin \theta \\ -r sin \theta & cos \theta } \pmatrix{ {e_r}^x & {e_r}^y \\ {e_\theta}^x & {e_\theta}^y }|_{\theta_0}$<br>
 <br>
-From this we get different curves depending on our initial value of ${e_a}^I$:<br>
+Let's say we initialize our basis at $e_r(r_0, \theta_0) = \pmatrix{ \cos \theta_0 \\ sin \theta_0 }$.
+and, orthonormally, $e_\theta(r_0, \theta_0) = \pmatrix{ -sin \theta_0 \\ cos \theta_0}$.<br>
+<br>
+Apply the solution to $\nabla_r {e_a}^I$, we know $e_r(r, \theta_0)$ stays constant at $\pmatrix{\cos \theta_0 \\ \sin \theta_0}$,
+however $e_\theta(r, \theta_0) = \frac{r}{r_0} \pmatrix{ -sin \theta_0 \\ cos \theta_0 }$.<br>
+<br>
+Now that we have ${e_a}^I(r, \theta_0)$, let's integrate around the polar angle.<br>
+$\pmatrix{ {e_r}^x & {e_r}^y \\ {e_\theta}^x & {e_\theta}^y }|_\theta 
+= \pmatrix{ cos \theta & \frac{1}{r} sin \theta \\ -r sin \theta & cos \theta } 
+\pmatrix{ cos \theta_0 & sin \theta_0 \\ -\frac{r}{r_0} sin \theta_0 & \frac{r}{r_0} cos \theta_0 }$<br>
+$= \pmatrix{ cos \theta cos \theta_0 - \frac{1}{r_0} sin \theta sin \theta_0 & cos \theta sin \theta_0 + \frac{1}{r_0} sin \theta cos \theta_0 \\
+				-r (sin \theta cos \theta_0 + \frac{1}{r_0} cos \theta sin \theta_0) & -r (sin \theta sin \theta_0 - \frac{1}{r_0} cos \theta cos \theta_0 }$<br>
+<br>
+For $r_0 = 1$ this gives us a surface such that travelling along $\nabla_\theta$ goes in circles:<br>
+${e_a}^I = \pmatrix{ cos (\theta + \theta_0) & sin (\theta + \theta_0) \\
+					-r sin (\theta + \theta_0) & -r cos (\theta + \theta_0) }$,
+or $e_r = \pmatrix{ cos (\theta + \theta_0) \\ sin (\theta + \theta_0) }$, $e_\theta = r \pmatrix{ -sin(\theta + \theta_0) \\ cos(\theta + \theta_0) }$<br>
+<br>
+Now for integrating the path of the surface around the basis:<br>
+Start at $x^I = \pmatrix{1 \\ 0}$.  Any position is as good as any other.  Reconstruction is isomorphic regarding the embedded space.<br>
 
-So far I can reconstruct any surface with no extrinsic curvature, provided the correct initial coordinates and basis are provided.<br>
-<br>
-For reconstructing the holonomic polar coordinates starting at ${e_a}^I(x_0) = \delta_a^I$ and $x_0 = [ r_0, \theta_0 ] = [0,1]$ we get things that work out:<br>
-<br>
-<img src='polar-correct.png'/><br>
-<br>
-If the initial coordinates are chosen to be $r_0 = 2$ then we get the following:<br>
-<br>
-<img src='polar-incorrect-r=2.png'/><br>
-<br>
-...and if the initial coordinates are chosen to be $r_0 = \frac{1}{2}$ then we get this:<br>
-<br>
-<img src='polar-incorrect-r=.5.png'/><br>
+
 <br>
 
 <h2> Practice </h2>
@@ -144,11 +163,29 @@ I've tried <br>
 I am testing it against known metrics.<br>
 Right now just the polar metric.<br>
 <br>
-Here's the difference in error between the analytical connection and the numerically computed connection for holonomic polar geometry:<br>
+
+
+If we apply this numerical technique starting at ${e_a}^I(x_0) = \delta_a^I$ and $x_0 = \pmatrix{ r_0 \\ \theta_0 } = \pmatrix{0\\1}$ we get things that work out:<br>
+<br>
+<img src='polar-correct.png'/><br>
+<br>
+If the initial coordinates are chosen to be $r_0 = 2$ then we get the following:<br>
+<br>
+<img src='polar-incorrect-r=2.png'/><br>
+<br>
+...and if the initial coordinates are chosen to be $r_0 = \frac{1}{2}$ then we get this:<br>
+<br>
+<img src='polar-incorrect-r=.5.png'/><br>
+<br>
+
+
+Deriving connection coefficients numerically from the metric tensor using finite difference methods is surprisingly accurate.<br>
+<br>
+Here's a graph of the Frobenius norm of the difference between the analytical connection and the numerically computed connection for holonomic polar geometry:<br>
 <br>
 <img src='conn numeric vs analytic.png'/><br>
 <br>
-
+As you can see, everything is below $10^{-14}$<br>
 
 	</body>
 </html>

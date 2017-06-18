@@ -214,17 +214,22 @@ what each geometry subclass needs:
 
 local PolarHolGeom = class(Geometry)
 PolarHolGeom.coords = {'r', 'θ'}
---[[ initialize our basis of e=I at r=1 ...
+-- [[ initialize our basis of e=I at r=1 ...
 PolarHolGeom.xmin = matrix{1, 0}
 PolarHolGeom.xmax = matrix{10, 2 * math.pi}
 PolarHolGeom.startCoord = {1,0}
 --]]
---[[ ...otherwise the shape gets messed up
+--[[ applying a rotation, e=I at r=1 and theta!=0 still produces the same shape.
+PolarHolGeom.xmin = matrix{1, 0}
+PolarHolGeom.xmax = matrix{10, 2 * math.pi}
+PolarHolGeom.startCoord = {1, math.pi/2}
+--]]
+--[[ ...otherwise the shape gets messed up -- for r=2
 PolarHolGeom.xmin = matrix{1, 0}
 PolarHolGeom.xmax = matrix{10, 2 * math.pi}
 PolarHolGeom.startCoord = {2,0}
 --]]
--- [[ ...otherwise the shape gets messed up
+--[[ ...otherwise the shape gets messed up -- for r=1/2 (needs the range readjusted so rmin isn't 1)
 PolarHolGeom.xmin = matrix{.1, 0}
 PolarHolGeom.xmax = matrix{2, 2 * math.pi}
 PolarHolGeom.startCoord = {.5,0}
