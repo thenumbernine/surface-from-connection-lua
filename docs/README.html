@@ -7,28 +7,116 @@
 	</head>
     <body onload='tryToFindMathJax();'>
 
-This is WIP project.<br>
-<br>
+<h2> Motive </h2>
+
 Lots of NR codes operate on a (rectangular?) grid<br>
 and likewise they keep track of only the metric and coordinate information<br>
 with no information about the background coordinate system.<br>
 <br>
 This is an attempt to reconstruct the surface of the coordinate space using only the numerical metric information.<br>
 I am integrating the basis vectors using the connection coefficients, and integrating the points in background coordinate space using the basis vectors.<br>
+
+<h2> Theory </h2>
+
+The metric tensor $g_{ab}$ defines how arclengths are measured across a surface.<br>
+It is defined by the equation $g_{ab} = \langle e_a, e_b \rangle$<br>
+Arclengths are defined using $ds^2 = g_{ab} dx^a dx^b$<br>
+The inverse metric is represented as $g^{ab}$ and fulfills the identity $g_{ac} g^{cb} = \delta_a^b$, where repeated indexes are implicitly summed in accordance with Einstein notation.<br>
 <br>
-I've tried <br>
-<ul>
-<li>forward-Euler integration</li>
-<li>RK4 integration</li>
-<li>explicitly solving linear dynamic systems (assuming the connection is constant), which I only have available for certain classifications of matrices.</li>
-</ul>
-I am testing it against known metrics.<br>
-Right now just the polar metric.<br>
+
+Commutation coefficients define the non-commutative elements of the $e_a$ operators: $[e_a, e_b] = {c_{ab}}^c e_c$, where $[a,b]$ is the Lie bracket.<br>
 <br>
-Here's the difference in error between the analytical connection and the numerically computed connection:<br>
+
+Connection coefficients are defined by the equation ${\Gamma^a}_{bc} = \frac{1}{2} g^{ad} (g_{db,c} + g_{dc,b} - g_{bc,d} + c_{dbc} + c_{dcb} - c_{bcd})$<br>
+Commas are used to denote comma derivatives, so $g_{ab,c} = \frac{\partial g_{ab}}{\partial x^c}$.<br>
 <br>
-<img src='conn numeric vs analytic.png'/><br>
+
+In a holonomic coordinate system, $e_a = \partial_a = \frac{\partial}{\partial x^a}$, therefore $[e_a, e_b] = \partial_a \partial_b - \partial_b \partial_a = 0$, 
+so $c_{abc} = 0$, and this simplifies to $\frac{1}{2} g^{ad} (g_{db,c} + g_{dc,b} - g_{bc,d})$<br>
 <br>
+
+In certain circumstances the $e_a$ operators can be represented as basis: $e_a = {e_a}^I \partial_I$.<br>
+<br>
+
+$e_u = {e_u}^I \frac{\partial}{\partial x^I}$<br>
+and ${e^v}_J$ is the inverse of ${e_u}^I$<br>
+such that ${e_u}^I {e^v}_I = \delta_u^v$ and ${e_u}^I {e^u}_J = \delta^I_J$<br>
+<br>	
+$[e_u, e_v] = e_u e_v - e_v e_u$<br>
+$= {e_u}^I \frac{\partial}{\partial x^I} ({e_v}^J \frac{\partial}{\partial x^J}) - {e_v}^I \frac{\partial}{\partial x^I} ({e_u}^J \frac{\partial}{\partial x^J})$<br>
+$= {e_u}^I ( (\frac{\partial}{\partial x^I} {e_v}^J) \frac{\partial}{\partial x^J} + {e_v}^J \frac{\partial}{\partial x^I} \frac{\partial}{\partial x^J}) - {e_v}^I ((\frac{\partial}{\partial x^I} {e_u}^J) \frac{\partial}{\partial x^J} + {e_u}^J \frac{\partial}{\partial x^I} \frac{\partial}{\partial x^J})$<br>
+$= {e_u}^I (\frac{\partial}{\partial x^I} {e_v}^J) \frac{\partial}{\partial x^J} - {e_v}^I (\frac{\partial}{\partial x^I} {e_u}^J) \frac{\partial}{\partial x^J}$<br>
+$= ({e_u}^I {{e_v}^J}_{,I} - {e_v}^I {{e_u}^J}_{,I}) \frac{\partial}{\partial x^J}$<br>
+$= ({e_u}^I (\frac{\partial x^a}{\partial x^I} \frac{\partial}{\partial x^a} {e_v}^J) - {e_v}^I (\frac{\partial x^a}{\partial x^I} \frac{\partial}{\partial x^a} {e_u}^J)) \frac{\partial}{\partial x^J}$<br>
+$= ({e_u}^I {{e_v}^J}_{,a} - {e_v}^I {{e_u}^J}_{,a}) {e^a}_I \frac{\partial}{\partial x^J}$<br>
+$= (\delta_u^a {{e_v}^J}_{,a} - \delta_v^a {{e_u}^J}_{,a}) \frac{\partial}{\partial x^J}$<br>
+$= ({{e_v}^J}_{,u} - {{e_u}^J}_{,v}) \frac{\partial}{\partial x^J}$<br>
+<br>	
+So for $[e_u, e_v] = {c_uv}^w e_w = {c_uv}^w {e_w}^J \frac{\partial}{\partial x^J}$<br>
+we find ${c_uv}^w {e_w}^I = ({{e_v}^I}_{,u} - {{e_u}^I}_{,v})$<br>
+or ${c_uv}^w = ({{e_v}^I}_{,u} - {{e_u}^I}_{,v}) {e^w}_I$<br>
+<br>
+
+Substitute the values of $g_{ab}$ and ${c_{ab}}^c$ in terms of ${e_a}^I$ into ${\Gamma^a}_{bc}$ and (TODO)...<br> 
+<br>
+
+Next we can define a covariant derivative $\nabla_b T^a = {T^a}_{,b} + {\Gamma^a}_{cb} T^c$ which represents a derivative in curved space.<br> 
+<br>
+
+From this we see $\nabla_c e_b = {\Gamma^a}_{bc} e_a$<br>
+<br>
+
+Take, for example, polar geometry.<br>
+<br>
+Polar geometry is represented by the coordinate chart $x^I = \pmatrix{x \\ y} = \pmatrix{r cos \theta \\ r sin \theta}$<br>
+The holonomic representation of polar geometry uses a coordinate basis of $e_a = \partial_a$, so ${e_r}^I = \partial_r x^I = \pmatrix{cos \theta \\ sin \theta}$
+and ${e_\theta}^I = \partial_\theta x^I = \pmatrix{-r sin \theta \\ r cos \theta}$.<br>
+<br>
+$g_{ab} = {e_a}^I {e_b}^J \delta_{IJ}$ gives us $g_{rr} = 1$, $g_{\theta\theta} = r^2$, $g_{r\theta} = g_{\theta r} = 0$.<br>
+<br>
+${\Gamma^\theta}_{\theta r} = {\Gamma^\theta}_{r\theta} = \frac{1}{r}$, ${\Gamma^r}_{\theta\theta} = -r$<br>
+<br>
+Let's look at the change of basis equation along the $r$ coordinate:<br>
+$\nabla_r {e_a}^I = {\Gamma^a}_{br} {e_b}^I$<br>
+Write this out as a matrix, and look at the coordinate derivative:<br>
+
+$\nabla_r {e_b}^I = {\Gamma^a}_{br} {e_a}^I$<br>
+
+$\frac{\partial}{\partial r} \cdot {}_{\downarrow b} \overset{\rightarrow I}{ \left[\matrix{ {e_b}^I }\right] } 
+= {}_{\downarrow b} \overset{\rightarrow a}{ \left[\matrix{ {\Gamma^a}_{br} }\right] } 
+\cdot {}_{\downarrow a} \overset{\rightarrow I}{ \left[\matrix{ {e_a}^I }\right] } $<br>
+
+$\frac{\partial}{\partial r} \pmatrix{ {e_r}^x & {e_r}^y \\ {e_\theta}^x & {e_\theta}^y }
+= \pmatrix{ {\Gamma^r}_{r r} & {\Gamma^\theta}_{r r} \\ {\Gamma^r}_{\theta r} & {\Gamma^\theta}_{\theta r}} \pmatrix{ {e_r}^x & {e_r}^y \\ {e_\theta}^x & {e_\theta}^y }
+= \pmatrix{ 0 & 0 \\ 0 & \frac{1}{r}} \pmatrix{ {e_r}^x & {e_r}^y \\ {e_\theta}^x & {e_\theta}^y }
+= \pmatrix{ 0 & 0 \\ \frac{1}{r} {e_\theta}^x & \frac{1}{r} {e_\theta}^y }$<br>
+So ${e_r}^I$ is constant,<br>
+and $\frac{\partial}{\partial r} {e_\theta}^I = \frac{1}{r} {e_\theta}^I$<br>
+$\frac{\partial {e_\theta}^I}{{e_\theta}^I} = \frac{\partial r}{r}$<br>
+${e_\theta}^I = C r$<br>
+${e_\theta}^I(r) = {e_\theta}^I(r_0) \cdot r$<br>
+Viola, we see ${e_\theta}^I$ grows by $r$ as a function of $r$.<br>
+<br>
+Now the same trick when integrating by angle:<br>
+
+$\nabla_\theta {e_b}^I = {\Gamma^a}_{b\theta} {e_a}^I$<br>
+
+$\frac{\partial}{\partial r} \pmatrix{ {e_r}^x & {e_r}^y \\ {e_\theta}^x & {e_\theta}^y }
+= \pmatrix{ {\Gamma^r}_{r \theta} & {\Gamma^\theta}_{r \theta} \\ {\Gamma^r}_{\theta \theta} & {\Gamma^\theta}_{\theta \theta}} \pmatrix{ {e_r}^x & {e_r}^y \\ {e_\theta}^x & {e_\theta}^y }
+= \pmatrix{ 0 & \frac{1}{r} \\ -r & 0} \pmatrix{ {e_r}^x & {e_r}^y \\ {e_\theta}^x & {e_\theta}^y }$<br>
+This looks like a linear dynamic system.<br>
+Eigen decomposition of the matrix form of ${\Gamma^a}_{b\theta}$ gives us:<br>
+$\pmatrix{ 0 & \frac{1}{r} \\ -r & 0} = \pmatrix{ 1 & 1 \\ -i r && i r} \pmatrix{-i & 0 \\ 0 & i} \pmatrix{\frac{1}{2} & \frac{i}{2 r} \\ \frac{1}{2} & -\frac{i}{2r} }$<br>
+Therefore the matrix exponent can be calculated as<br>
+$exp( \theta \cdot \left[ {\Gamma^a}_{b\theta} \right] ) 
+= \pmatrix{ 1 & 1 \\ -i r && i r} \pmatrix{exp(-i \theta) & 0 \\ 0 & exp(i \theta)} \pmatrix{\frac{1}{2} & \frac{i}{2 r} \\ \frac{1}{2} & -\frac{i}{2r} }
+= \pmatrix{ cos \theta & sin \theta \\ -r sin \theta & r cos \theta}
+$<br>
+And we now get an equation for integrating our basis around $\theta$:
+$\pmatrix{ e_r \\ e_\theta }|_\theta = exp(\theta {\Gamma^a}_{b\theta} ) \cdot \pmatrix{ e_r \\ e_\theta}|_{\theta_0}$<br>
+<br>
+From this we get different curves depending on our initial value of ${e_a}^I$:<br>
+
 So far I can reconstruct any surface with no extrinsic curvature, provided the correct initial coordinates and basis are provided.<br>
 <br>
 For reconstructing the holonomic polar coordinates starting at ${e_a}^I(x_0) = \delta_a^I$ and $x_0 = [ r_0, \theta_0 ] = [0,1]$ we get things that work out:<br>
@@ -43,8 +131,24 @@ If the initial coordinates are chosen to be $r_0 = 2$ then we get the following:
 <br>
 <img src='polar-incorrect-r=.5.png'/><br>
 <br>
-TODO show the math that verifies this<br>
+
+<h2> Practice </h2>
+
 <br>
+I've tried <br>
+<ul>
+<li>forward-Euler integration</li>
+<li>RK4 integration</li>
+<li>explicitly solving linear dynamic systems (assuming the connection is constant), which I only have available for certain classifications of matrices.</li>
+</ul>
+I am testing it against known metrics.<br>
+Right now just the polar metric.<br>
+<br>
+Here's the difference in error between the analytical connection and the numerically computed connection for holonomic polar geometry:<br>
+<br>
+<img src='conn numeric vs analytic.png'/><br>
+<br>
+
 
 	</body>
 </html>
