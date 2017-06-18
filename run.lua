@@ -24,7 +24,6 @@ local function int_rk4(r, q, dq_dr, dr)
 	return q + (k1 + 2 * k2 + 2 * k3 + k4) * dr / 6, r + dr
 end
 
-
 local function permutations(args)
 	local parity = args.parity or (#args.elements%2==0 and 1 or -1)
 	local p = args.elements
@@ -125,8 +124,8 @@ local Geometry = class()
 
 function Geometry:init(app)
 	self.app = app
-	self.umin = matrix(self.umin)
-	self.umax = matrix(self.umax)
+	self.xmin = matrix(self.xmin)
+	self.xmax = matrix(self.xmax)
 
 	self.coordVars = table.map(self.coords, function(name)
 		return symmath.var(name)
@@ -190,6 +189,7 @@ function Geometry:calc_gs()
 	end)
 end
 
+-- this is only used for comparing the error between the numerical and the exact connections
 function Geometry:calc_conns()
 	if not self.calc.Conn then return end
 	return self.app.size:lambda(function(...)
@@ -198,14 +198,37 @@ function Geometry:calc_conns()
 end
 
 
+--[[
+what each geometry subclass needs:
+* coords, to determine the dimension of the surface
+* xmin, xmax
+* startCoord (where to start the surface generation at.  this is very important.
+* one of the two:
+	* createMetric, if the geometry is to use an analytical metric 
+	* calc_conns.  otherwise these return identity g_ab's and zero Conn^a_bc's.
+--]]
+
+
 -- 2D geometries
 
 
 local PolarHolGeom = class(Geometry)
 PolarHolGeom.coords = {'r', 'θ'}
-PolarHolGeom.umin = matrix{1, 0}
-PolarHolGeom.umax = matrix{10, 2 * math.pi}
-PolarHolGeom.startCoord = {1,0}	-- initialize our basis of e=I at r=1, otherwise the shape gets messed up
+--[[ initialize our basis of e=I at r=1 ...
+PolarHolGeom.xmin = matrix{1, 0}
+PolarHolGeom.xmax = matrix{10, 2 * math.pi}
+PolarHolGeom.startCoord = {1,0}
+--]]
+--[[ ...otherwise the shape gets messed up
+PolarHolGeom.xmin = matrix{1, 0}
+PolarHolGeom.xmax = matrix{10, 2 * math.pi}
+PolarHolGeom.startCoord = {2,0}
+--]]
+-- [[ ...otherwise the shape gets messed up
+PolarHolGeom.xmin = matrix{.1, 0}
+PolarHolGeom.xmax = matrix{2, 2 * math.pi}
+PolarHolGeom.startCoord = {.5,0}
+--]] 
 function PolarHolGeom:createMetric()
 	local r, theta = self.coordVars:unpack()
 	return symmath.Tensor('_ab', {1, 0}, {0, r^2})
@@ -219,8 +242,8 @@ end
 -- This information is typically stored in the metric of the holonomic coordinate map.
 local PolarNonHolGeom = class(Geometry)
 PolarNonHolGeom.coords = {'r', 'θ'}
-PolarNonHolGeom.umin = matrix{1, 0}
-PolarNonHolGeom.umax = matrix{10, 2 * math.pi}
+PolarNonHolGeom.xmin = matrix{1, 0}
+PolarNonHolGeom.xmax = matrix{10, 2 * math.pi}
 function PolarNonHolGeom:calc_conns()
 	return self.app.size:lambda(function(i,j)
 		local r = self.app.xs[i][j][1]
@@ -234,12 +257,13 @@ end
 -- because it needs extrinsic curvature information
 -- it has a connection of zero
 
-
--- sphere surface likewise is 2 dimensions inside 3 dimensions
+-- sphere surface likewise is a 2 dimensional system inside 3 dimensions
+-- like cyl surface, it needs extrinsic curvature information to be properly rebuilt 
 local SphereSurfaceHolGeom = class(Geometry)
+local eps = .01
 SphereSurfaceHolGeom.coords = {'θ', 'phi'}
-SphereSurfaceHolGeom.umin = matrix{0, 0}
-SphereSurfaceHolGeom.umax = matrix{math.pi, 2*math.pi}
+SphereSurfaceHolGeom.xmin = matrix{eps, eps}
+SphereSurfaceHolGeom.xmax = matrix{math.pi-eps, 2*math.pi-eps}
 SphereSurfaceHolGeom.startCoord = {math.pi/2, math.pi}
 function SphereSurfaceHolGeom:createMetric()
 	local theta, phi = self.coordVars:unpack()
@@ -248,18 +272,42 @@ function SphereSurfaceHolGeom:createMetric()
 end
 
 
+local PoincareDisk = class(Geometry)
+PoincareDisk.coords = {'u', 'v'}
+PoincareDisk.xmin = {-1, -1}
+PoincareDisk.xmax = {1, 1}
+PoincareDisk.startCoord = {0, 0}
+function PoincareDisk:createMetric()
+	local u, v = self.coordVars:unpack()
+	return symmath.Tensor('_ab', {4 / (1 - u^2 - v^2), 0}, {0, 4 / (1 - u^2 - v^2)})
+end
+
 -- 3D geometries
 
 
 local CylHolGeom = class(Geometry)
 CylHolGeom.coords = {'r', 'θ', 'z'}
-CylHolGeom.umin = {1, 0, -5}
-CylHolGeom.umax = {10, 2*math.pi, 5}
+CylHolGeom.xmin = {1, 0, -5}
+CylHolGeom.xmax = {10, 2*math.pi, 5}
 CylHolGeom.startCoord = {1,math.pi,0}
 function CylHolGeom:createMetric()
 	local r, theta, z = self.coordVars:unpack()
 	return symmath.Tensor('_ab', {1, 0, 0}, {0, r^2, 0}, {0, 0, 1})
 end
+
+
+local SphereHolGeom = class(Geometry)
+local eps = .01	-- the holonomic connection gets singularities (cot theta = inf) at the boundaries
+				-- this could be avoided if the metric was evaluated at grid centers instead of vertices.
+SphereHolGeom.coords = {'r', 'θ', 'φ'}
+SphereHolGeom.xmin = {1, eps, -math.pi + eps}
+SphereHolGeom.xmax = {10, math.pi - eps, math.pi - eps}
+SphereHolGeom.startCoord = {1, math.pi/2, 0}
+function SphereHolGeom:createMetric()
+	local r, theta, phi = self.coordVars:unpack()
+	return symmath.Tensor('_ab', {1,0,0}, {0, r^2, 0}, {0, 0, r^2 * symmath.sin(theta)^2})
+end
+
 
 local function I(x)
 	return function()
@@ -268,93 +316,97 @@ local function I(x)
 end
 
 
-local SphereHolGeom = class(Geometry)
-SphereHolGeom.coords = {'r', 'θ', 'φ'}
-SphereHolGeom.umin = {1, 0, -math.pi}
-SphereHolGeom.umax = {10, math.pi, math.pi}
-SphereHolGeom.startCoord = {1,math.pi/2,0}
-function SphereHolGeom:createMetric()
-	local r, theta, phi = self.coordVars:unpack()
-	return symmath.Tensor('_ab', {1,0,0}, {0, r^2, 0}, {0, 0, r^2 * symmath.sin(theta)^2})
-end
-
 local App = class(Orbit(View.apply(ImGuiApp)))
 
 App.title = 'reconstruct surface from geodesics' 
 App.viewDist = 10
 
 function App:initGL()
+	gl.glEnable(gl.GL_DEPTH_TEST)
+
 	-- 2D
 	self.geom = PolarHolGeom(self)
 	--self.geom = PolarNonHolGeom(self)
-	--self.geom = SphereSurfaceHolGeom(self)
+	--self.geom = SphereSurfaceHolGeom(self)	-- in absence of extrinsic curvature, this creates a polyconic projection
+	--self.geom = ParabolaHolGeom(self)
+	--self.geom = PoincareDisk(self)
 	-- 3D
 	--self.geom = CylHolGeom(self)
 	--self.geom = SphereHolGeom(self)
 
 	local n = #self.geom.coords
-	self.size = matrix{n}:lambda(I(16))
+	self.size = matrix{n}:lambda(I( ({[2]=64, [3]=16})[n] ))
 
-	self.umin = self.geom and self.geom.umin or matrix{n}:lambda(I(-1))
-	self.umax = self.geom and self.geom.umax or matrix{n}:lambda(I(1))
+	self.xmin = self.geom and self.geom.xmin or matrix{n}:lambda(I(-1))
+	self.xmax = self.geom and self.geom.xmax or matrix{n}:lambda(I(1))
 	
 	local n = #self.size
 	
-	--[[ cell centered, including borders
-	self.dx = matrix{n}:ones():emul(self.umax - self.umin):ediv(self.size)
-	self.xs = self.size:lambda(function(i,j) return matrix{i-.5, j-.5}:emul(self.dx) + self.umin end)
-	--]]
-	-- [[ vertex centered, excluding borders, so position 2,2 is at umin (useful for centering the corner vertex)
-	self.dx = matrix{n}:ones():emul(self.umax - self.umin):ediv(self.size-3)
-	self.xs = self.size:lambda(function(...) return (matrix{...}-2):emul(self.dx) + self.umin end)
-	--]]
+	self.view.ortho = n == 2
 	
-	self.gs = self.geom and self.geom.calc_gs and self.geom:calc_gs() 
-		or self.size:lambda(function(...) return matrix{n,n}:ident() end)
-	self.gUs = self.size:lambda(function(...)
-		return self.gs[{...}]:inv()
-	end)
-	self.dgs = self.size:lambda(function(...)
-		local i = matrix{...}
-		-- dg_abc = dg_bc/dx^a
-		local dg = matrix{n}:lambda(function(a)
-			-- using a constant border
-			local ip = matrix(i) ip[a] = math.min(ip[a]+1, self.size[a])
-			local im = matrix(i) im[a] = math.max(im[a]-1, 1)
-			-- using a first-order derivative
-			return (self.gs[ip] - self.gs[im]) / (self.xs[ip][a] - self.xs[im][a])
-		end)
-		-- reorientate dg_abc = g_ab,c
-		return matrix{n,n,n}:lambda(function(a,b,c) return dg[c][a][b] end)
-	end)
-	self.conns = self.size:lambda(function(...)
-		local i = matrix{...}
-		local dg = self.dgs[i]
-		local numConnLower = matrix{n,n,n}:lambda(function(a,b,c)
-			return .5 * (dg[a][b][c] + dg[a][c][b] - dg[b][c][a])
-		end)
-		local gU = self.gUs[i]
-		local check1 = gU * numConnLower
-		local check2 = matrix{n,n,n}:lambda(function(a,b,c)
-			local s = 0
-			for d=1,n do
-				s = s + gU[a][d] * numConnLower[d][b][c]
-			end
-			return s
-		end)
-		local err = (check1 - check2):norm()
-		if err ~= 0 then
-			print('check1')
-			print(check1)
-			print('check2')
-			print(check2)
-			error('norms differ by '..err)
-		end
-		return check2
-	end)
+	--[[ cell centered, including borders
+	self.dx = matrix{n}:ones():emul(self.xmax - self.xmin):ediv(self.size)
+	self.xs = self.size:lambda(function(...) return (matrix{...} - .5):emul(self.dx) + self.xmin end)
+	--]]
+	-- [[ vertex centered, excluding borders, so position 2,2 is at xmin (useful for centering the corner vertex)
+	self.dx = matrix{n}:ones():emul(self.xmax - self.xmin):ediv(self.size-3)
+	self.xs = self.size:lambda(function(...) return (matrix{...} - 2):emul(self.dx) + self.xmin end)
+	--]]
 
-	if self.geom then
-		self.geom:testExact()
+	-- if we are calculating the connection from discrete derivatives of the metric ...
+	if self.geom.calc_gs then
+		local gs = self.geom:calc_gs() 
+		--or self.size:lambda(function(...) return matrix{n,n}:ident() end)
+		local gUs = self.size:lambda(function(...)
+			return gs[{...}]:inv()
+		end)
+		local dgs = self.size:lambda(function(...)
+			local i = matrix{...}
+			-- dg_abc = dg_bc/dx^a
+			local dg = matrix{n}:lambda(function(a)
+				-- using a constant border
+				local ip = matrix(i) ip[a] = math.min(ip[a]+1, self.size[a])
+				local im = matrix(i) im[a] = math.max(im[a]-1, 1)
+				-- using a first-order derivative
+				return (gs[ip] - gs[im]) / (self.xs[ip][a] - self.xs[im][a])
+			end)
+			-- reorientate dg_abc = g_ab,c
+			return matrix{n,n,n}:lambda(function(a,b,c) return dg[c][a][b] end)
+		end)
+
+		self.conns = self.size:lambda(function(...)
+			local i = matrix{...}
+			local dg = dgs[i]
+			local numConnLower = matrix{n,n,n}:lambda(function(a,b,c)
+				return .5 * (dg[a][b][c] + dg[a][c][b] - dg[b][c][a])
+			end)
+			local gU = gUs[i]
+			local check1 = gU * numConnLower
+			local check2 = matrix{n,n,n}:lambda(function(a,b,c)
+				local s = 0
+				for d=1,n do
+					s = s + gU[a][d] * numConnLower[d][b][c]
+				end
+				return s
+			end)
+			local err = (check1 - check2):norm()
+			if err ~= 0 
+			and err == err	-- skip the nans
+			then
+				print('check1')
+				print(check1)
+				print('check2')
+				print(check2)
+				error('norms differ by '..err)
+			end
+			return check2
+		end)
+		if self.geom and self.geom.calc_conns then
+			self.geom:testExact()
+		end
+	else
+		-- if calc_gs isn't there, then rely on calc_conns for providing the initial connections
+		self.conns = self.geom:calc_conns()
 	end
 
 	-- embedded space position
@@ -366,7 +418,7 @@ function App:initGL()
 	end)
 
 	local xInit = matrix(assert(self.geom.startCoord))
-	local i = ((xInit - self.geom.umin):ediv(self.geom.umax - self.geom.umin):emul(self.size-2) + 2.5):map(math.floor)
+	local i = ((xInit - self.geom.xmin):ediv(self.geom.xmax - self.geom.xmin):emul(self.size-2) + 2.5):map(math.floor)
 	self.es[i] = matrix{n,n}:ident()
 	local function withinEdge(index,size)
 		for i=1,n do
@@ -375,17 +427,15 @@ function App:initGL()
 		return true
 	end
 
+print'building surface...'
 	-- now to reconstruct the es based on the conns ...
 	-- [=[ flood fill 
 	local todo = table{i}
-	local sofar = table()
+	local sofar = {[tostring(index)] = true}
 	while #todo > 0 do
 		local index = todo:remove(1)
-		sofar:insert(index)
 		local conn = self.conns[index]
 		-- for each direction ...
-		local x = self.xs[index]
-		local g = self.gs[index]	
 		local _ = matrix.index
 		for k=1,n do
 			local connk = conn(_,_,k)
@@ -395,24 +445,18 @@ function App:initGL()
 				nextIndex[k] = nextIndex[k] + dir
 				-- skip the edges
 				if withinEdge(nextIndex, self.size)
-				and not table.find(sofar, nextIndex) 
-				and not table.find(todo, nextIndex)
+				and not sofar[tostring(nextIndex)]
 				then
 					local nextConnK = self.conns[nextIndex](_,_,k)
-					
-					-- ds = sqrt(g_ab dx^a dx^b) 
-					local dx = matrix{n}:zeros()
-					dx[k] = dir * self.dx[k]
-					--local ds = math.sqrt(dx * g * dx)
-					ds = dx[k]
+				
+					-- derivative along coordinate
+					local ds = dir * self.dx[k]
 				
 					local eOrig = self.es[index]
 					local XOrig = self.Xs[index]
 					
 					local e = matrix(eOrig)
 					local X = matrix(XOrig)
-
-					-- (notice, when integrating polar coordinates around theta, r remains constant, and so do the connection coefficients)
 					
 					--[[ forward-euler
 					e = e + (e * connk) * ds
@@ -425,9 +469,10 @@ function App:initGL()
 						-- interpolating connections between cells
 						return e * (nextConnK * s + connk * (ds - s)) / ds
 						-- using analytical solution
-						--return e * self.geom.calc.Conn(x + dx * s)(_,k)
+						--local x = self.xs[index]
+						--local xNext = self.xs[nextIndex]
+						--return e * self.geom.calc.Conn( (x * s + xNext * (ds - s)) / ds  )(_,k)
 					end, ds)
-					
 					X = int_rk4(0, X, function(s, X)
 						local f = s / ds
 						-- constant:
@@ -572,7 +617,6 @@ print()
 print('index='..index)
 --print('self.dx='..self.dx)
 print('nextIndex='..nextIndex)
-print('dx='..dx)
 print('ds='..ds)
 print('x='..self.xs[index])
 print('conn[k]='..connk)
@@ -594,6 +638,7 @@ print('e='..e)
 					--todo:insert(math.floor((#todo+1)/2), nextIndex)
 					-- the linear dynamic system method only works right for polar coordinates when we use this order
 					--todo:insert(1, nextIndex)
+					sofar[tostring(nextIndex)] = true
 				end
 			end	
 		end
@@ -618,14 +663,54 @@ local function glVertex(m)
 	})[#m])(m:unpack())
 end
 
+function App:drawGrid()
+	local xmin, xmax, ymin, ymax = self.view:getBounds(self.width / self.height)
+	xmin = xmin + self.view.pos[1]
+	ymin = ymin + self.view.pos[2]
+	xmax = xmax + self.view.pos[1]
+	ymax = ymax + self.view.pos[2]
+	
+	gl.glColor3f(.1, .1, .1)
+	local xrange = xmax - xmin
+	local xstep = 10^math.floor(math.log(xrange, 10) - .5)
+	local xticmin = math.floor(xmin/xstep)
+	local xticmax = math.ceil(xmax/xstep)
+	gl.glBegin(gl.GL_LINES)
+	for x=xticmin,xticmax do
+		gl.glVertex2f(x*xstep,ymin)
+		gl.glVertex2f(x*xstep,ymax)
+	end
+	gl.glEnd()
+	local yrange = ymax - ymin
+	local ystep = 10^math.floor(math.log(yrange, 10) - .5)
+	local yticmin = math.floor(ymin/ystep)
+	local yticmax = math.ceil(ymax/ystep)
+	gl.glBegin(gl.GL_LINES)
+	for y=yticmin,yticmax do
+		gl.glVertex2f(xmin,y*ystep)
+		gl.glVertex2f(xmax,y*ystep)
+	end
+	gl.glEnd()
+
+	gl.glColor3f(.5, .5, .5)
+	gl.glBegin(gl.GL_LINES)
+	gl.glVertex2f(xmin, 0)
+	gl.glVertex2f(xmax, 0)
+	gl.glVertex2f(0, ymin)
+	gl.glVertex2f(0, ymax)
+	gl.glEnd()
+end
+
 function App:update()
 	gl.glClear(bit.bor(gl.GL_COLOR_BUFFER_BIT, gl.GL_DEPTH_BUFFER_BIT))
+		
 	App.super.update(self)
 
 	local n = #self.size
 
 	self.list = self.list or {}
 	glCall(self.list, function()
+print'building GL call list...'
 
 		--gl.glColor3f(0,1,1)
 		gl.glBegin(gl.GL_LINES)
@@ -645,6 +730,7 @@ function App:update()
 		end
 		gl.glEnd()
 
+--[[
 		local colors = matrix{
 			{1,0,0},
 			{0,1,0},
@@ -668,7 +754,10 @@ function App:update()
 		end
 		gl.glEnd()
 		gl.glPopMatrix()
+--]]	
 	end)
+
+	self:drawGrid()
 end
 
 App():run()

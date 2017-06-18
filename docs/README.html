@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+	<head>
+        <meta charset="UTF-8">
+		<title>Reconstructing Surfaces from Connection Coefficients</title>
+		<script type="text/javascript" src='tryToFindMathJax.js'></script>
+	</head>
+    <body onload='tryToFindMathJax();'>
+
+This is WIP project.<br>
+<br>
+Lots of NR codes operate on a (rectangular?) grid<br>
+and likewise they keep track of only the metric and coordinate information<br>
+with no information about the background coordinate system.<br>
+<br>
+This is an attempt to reconstruct the surface of the coordinate space using only the numerical metric information.<br>
+I am integrating the basis vectors using the connection coefficients, and integrating the points in background coordinate space using the basis vectors.<br>
+<br>
+I've tried <br>
+<ul>
+<li>forward-Euler integration</li>
+<li>RK4 integration</li>
+<li>explicitly solving linear dynamic systems (assuming the connection is constant), which I only have available for certain classifications of matrices.</li>
+</ul>
+I am testing it against known metrics.<br>
+Right now just the polar metric.<br>
+<br>
+Here's the difference in error between the analytical connection and the numerically computed connection:<br>
+<br>
+<img src='conn numeric vs analytic.png'/><br>
+<br>
+So far I can reconstruct any surface with no extrinsic curvature, provided the correct initial coordinates and basis are provided.<br>
+
+
+	</body>
+</html>
