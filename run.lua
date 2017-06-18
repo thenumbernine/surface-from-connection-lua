@@ -205,9 +205,9 @@ local PolarHolGeom = class(Geometry)
 PolarHolGeom.coords = {'r', 'θ'}
 PolarHolGeom.umin = matrix{1, 0}
 PolarHolGeom.umax = matrix{10, 2 * math.pi}
-PolarHolGeom.startIndex = {2,2}	-- initialize our basis of e=I at r=1, otherwise the shape gets messed up
+PolarHolGeom.startCoord = {1,0}	-- initialize our basis of e=I at r=1, otherwise the shape gets messed up
 function PolarHolGeom:createMetric()
-	local r, theta = table.unpack(self.coordVars)
+	local r, theta = self.coordVars:unpack()
 	return symmath.Tensor('_ab', {1, 0}, {0, r^2})
 end
 
@@ -240,9 +240,9 @@ local SphereSurfaceHolGeom = class(Geometry)
 SphereSurfaceHolGeom.coords = {'θ', 'phi'}
 SphereSurfaceHolGeom.umin = matrix{0, 0}
 SphereSurfaceHolGeom.umax = matrix{math.pi, 2*math.pi}
-SphereSurfaceHolGeom.startIndex = {14,14}	-- n-2,n-2
+SphereSurfaceHolGeom.startCoord = {math.pi/2, math.pi}
 function SphereSurfaceHolGeom:createMetric()
-	local theta, phi = table.unpack(self.coordVars)
+	local theta, phi = self.coordVars:unpack()
 	local r = 1
 	return symmath.Tensor('_ab', {r^2, 0}, {0, r^2 * symmath.sin(theta)^2})
 end
@@ -255,9 +255,9 @@ local CylHolGeom = class(Geometry)
 CylHolGeom.coords = {'r', 'θ', 'z'}
 CylHolGeom.umin = {1, 0, -5}
 CylHolGeom.umax = {10, 2*math.pi, 5}
-CylHolGeom.startIndex = {2,2,2}
+CylHolGeom.startCoord = {1,math.pi,0}
 function CylHolGeom:createMetric()
-	local r, theta, z = table.unpack(self.coordVars)
+	local r, theta, z = self.coordVars:unpack()
 	return symmath.Tensor('_ab', {1, 0, 0}, {0, r^2, 0}, {0, 0, 1})
 end
 
@@ -268,6 +268,16 @@ local function I(x)
 end
 
 
+local SphereHolGeom = class(Geometry)
+SphereHolGeom.coords = {'r', 'θ', 'φ'}
+SphereHolGeom.umin = {1, 0, -math.pi}
+SphereHolGeom.umax = {10, math.pi, math.pi}
+SphereHolGeom.startCoord = {1,math.pi/2,0}
+function SphereHolGeom:createMetric()
+	local r, theta, phi = self.coordVars:unpack()
+	return symmath.Tensor('_ab', {1,0,0}, {0, r^2, 0}, {0, 0, r^2 * symmath.sin(theta)^2})
+end
+
 local App = class(Orbit(View.apply(ImGuiApp)))
 
 App.title = 'reconstruct surface from geodesics' 
@@ -275,12 +285,13 @@ App.viewDist = 10
 
 function App:initGL()
 	-- 2D
-	--self.geom = SphereSurfaceHolGeom(self)
-	--self.geom = PolarHolGeom(self)
+	self.geom = PolarHolGeom(self)
 	--self.geom = PolarNonHolGeom(self)
+	--self.geom = SphereSurfaceHolGeom(self)
 	-- 3D
-	self.geom = CylHolGeom(self)
-	
+	--self.geom = CylHolGeom(self)
+	--self.geom = SphereHolGeom(self)
+
 	local n = #self.geom.coords
 	self.size = matrix{n}:lambda(I(16))
 
@@ -331,7 +342,14 @@ function App:initGL()
 			end
 			return s
 		end)
-		assert((check1 - check2):norm() == 0)
+		local err = (check1 - check2):norm()
+		if err ~= 0 then
+			print('check1')
+			print(check1)
+			print('check2')
+			print(check2)
+			error('norms differ by '..err)
+		end
 		return check2
 	end)
 
@@ -346,10 +364,9 @@ function App:initGL()
 	self.es = self.size:lambda(function(...)
 		return matrix{n,n}:zeros()
 	end)
-	
-	local i = self.geom.startIndex
-		and matrix(self.geom.startIndex)
-		or matrix{n}:lambda(I(2))
+
+	local xInit = matrix(assert(self.geom.startCoord))
+	local i = ((xInit - self.geom.umin):ediv(self.geom.umax - self.geom.umin):emul(self.size-2) + 2.5):map(math.floor)
 	self.es[i] = matrix{n,n}:ident()
 	local function withinEdge(index,size)
 		for i=1,n do
