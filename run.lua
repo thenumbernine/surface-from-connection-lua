@@ -249,6 +249,7 @@ local PolarNonHolGeom = class(Geometry)
 PolarNonHolGeom.coords = {'r', 'θ'}
 PolarNonHolGeom.xmin = matrix{1, 0}
 PolarNonHolGeom.xmax = matrix{10, 2 * math.pi}
+PolarNonHolGeom.startCoord = {1,0}
 function PolarNonHolGeom:calc_conns()
 	return self.app.size:lambda(function(i,j)
 		local r = self.app.xs[i][j][1]
@@ -269,7 +270,12 @@ local eps = .01
 SphereSurfaceHolGeom.coords = {'θ', 'phi'}
 SphereSurfaceHolGeom.xmin = matrix{eps, eps}
 SphereSurfaceHolGeom.xmax = matrix{math.pi-eps, 2*math.pi-eps}
-SphereSurfaceHolGeom.startCoord = {math.pi/2, math.pi}
+
+SphereSurfaceHolGeom.startCoord = {math.pi/2, math.pi}	-- poles along x axis
+--SphereSurfaceHolGeom.startCoord = {2*eps, math.pi}			-- stretched to infinite becuase of infinite connections
+--SphereSurfaceHolGeom.startCoord = {math.pi/4, math.pi}
+--SphereSurfaceHolGeom.startCoord = {math.pi/2, 2*eps}		-- mostly y>0
+--SphereSurfaceHolGeom.startCoord = {math.pi/2, math.pi*2-2*eps}	-- mostly y<0
 function SphereSurfaceHolGeom:createMetric()
 	local theta, phi = self.coordVars:unpack()
 	local r = 1
@@ -330,11 +336,10 @@ function App:initGL()
 	gl.glEnable(gl.GL_DEPTH_TEST)
 
 	-- 2D
-	self.geom = PolarHolGeom(self)
+	--self.geom = PolarHolGeom(self)
 	--self.geom = PolarNonHolGeom(self)
 	--self.geom = SphereSurfaceHolGeom(self)	-- in absence of extrinsic curvature, this creates a polyconic projection
-	--self.geom = ParabolaHolGeom(self)
-	--self.geom = PoincareDisk(self)
+	self.geom = PoincareDisk(self)
 	-- 3D
 	--self.geom = CylHolGeom(self)
 	--self.geom = SphereHolGeom(self)
