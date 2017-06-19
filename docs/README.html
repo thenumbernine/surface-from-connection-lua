@@ -201,6 +201,20 @@ For $\theta_0 = \frac{\pi}{2}, \phi_0 = 2 \pi$ we find:<br>
 <img src='sphere surface - theta=.5 pi phi=2 pi.png'/><br>
 <br>
 
+Extending this to 3D worked fine.  For cylindrical easily.<br>
+However extending to spherical proved some problems.<br>
+Connections of a spherical metric involve a $cot(\theta)$ term, and therefore reach a singularity at the poles.<br>
+I also cut out a slice at $\phi=0$, I forget why, maybe just to be safe:<br>
+<img src='sphere - r=1, theta=.5 pi, phi=0.png'/><br>
+<br>
+Changing $r_0 = 2$ squashes the sphere into an ellipsoid, similarly to how it does with polar coordinates:<br>
+<img src='sphere - r=2, theta=.5 pi, phi=0.png'/><br>
+<br>
+However changing $\phi_0$ doesn't change things so dramatically as it does on the sphere surface.<br>
+Maybe because those changes on the sphere surface are expressions of the absence of extrinsic curvature,
+while, in the 3D case, there is no extrinsic curvature.<br>
+<br>
+
 Deriving connection coefficients numerically from the metric tensor using finite difference methods is surprisingly accurate.<br>
 <br>
 Here's a graph of the Frobenius norm of the difference between the analytical connection and the numerically computed connection for holonomic polar geometry:<br>

@@ -308,12 +308,14 @@ end
 
 
 local SphereHolGeom = class(Geometry)
-local eps = .01	-- the holonomic connection gets singularities (cot theta = inf) at the boundaries
+local eps = .05	-- the holonomic connection gets singularities (cot theta = inf) at the boundaries
 				-- this could be avoided if the metric was evaluated at grid centers instead of vertices.
 SphereHolGeom.coords = {'r', 'θ', 'φ'}
 SphereHolGeom.xmin = {1, eps, -math.pi + eps}
 SphereHolGeom.xmax = {10, math.pi - eps, math.pi - eps}
-SphereHolGeom.startCoord = {1, math.pi/2, 0}
+--SphereHolGeom.startCoord = {1, math.pi/2, 0}
+--SphereHolGeom.startCoord = {2, math.pi/2, 0}	-- squashed to an ellipsoid, just like the polar case
+--SphereHolGeom.startCoord = {1, math.pi/2, math.pi-2*eps}	-- changing phi_0 doesn't affect it at all though
 function SphereHolGeom:createMetric()
 	local r, theta, phi = self.coordVars:unpack()
 	return symmath.Tensor('_ab', {1,0,0}, {0, r^2, 0}, {0, 0, r^2 * symmath.sin(theta)^2})
@@ -339,10 +341,10 @@ function App:initGL()
 	--self.geom = PolarHolGeom(self)
 	--self.geom = PolarNonHolGeom(self)
 	--self.geom = SphereSurfaceHolGeom(self)	-- in absence of extrinsic curvature, this creates a polyconic projection
-	self.geom = PoincareDisk(self)
+	--self.geom = PoincareDisk(self)
 	-- 3D
 	--self.geom = CylHolGeom(self)
-	--self.geom = SphereHolGeom(self)
+	self.geom = SphereHolGeom(self)
 
 	local n = #self.geom.coords
 	self.size = matrix{n}:lambda(I( ({[2]=64, [3]=16})[n] ))
@@ -654,6 +656,16 @@ print('e='..e)
 		end
 	end
 	--]]
+
+	-- recenter ...
+	local com = matrix{n}:lambda(I(0))
+	for i in self.size:range() do
+		com = com + self.Xs[i]
+	end
+	com = com / self.size:prod()
+	for i in self.size:range() do
+		self.Xs[i] = self.Xs[i] - com
+	end
 end
 
 local function glColor(m)
@@ -767,7 +779,9 @@ print'building GL call list...'
 --]]	
 	end)
 
-	self:drawGrid()
+	if n == 2 then
+		self:drawGrid()
+	end
 end
 
 App():run()
