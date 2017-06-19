@@ -1,8 +1,11 @@
 #! /usr/bin/env luajit
 require 'ext'
 local bit = require 'bit'
+local ffi = require 'ffi'
+local ig = require 'ffi.imgui'
 local gl = require 'gl'
 local glCall = require 'gl.call'
+local GLProgram = require 'gl.program'
 local matrix = require 'matrix'
 local complex = require 'symmath.complex'
 local symmath = require 'symmath'
@@ -86,6 +89,13 @@ function matrix.det(m)
 end
 --matrix.__tostring = tolua
 
+function matrix:isfinite()
+	for i in self:iter() do
+		if not math.isfinite(self[i]) then return false end
+	end
+	return true
+end
+
 function matrix:ident()
 	assert(#self == 2 and self:degree() == 1)
 	return self:lambda(function(i,j)
@@ -132,10 +142,10 @@ function Geometry:init(app)
 	end)
 
 	local Tensor = symmath.Tensor
-	do --if self.coordVars then
+	if self.createMetric then
 		Tensor.coords{{variables=self.coordVars}}
 		local n = #self.coords
-		local g = self.createMetric and self:createMetric() or Tensor('_ab', table.unpack(symmath.Matrix.identity(n,n)))
+		local g = self:createMetric()
 		local gU = Tensor('^ab', table.unpack( (symmath.Matrix.inverse(g)) ))
 		local dg = Tensor('_abc', table.unpack(g'_ab,c'()))
 		local ConnL = Tensor('_abc', table.unpack( ((dg'_abc' + dg'_acb' - dg'_bca')/2)() ))
@@ -212,32 +222,53 @@ what each geometry subclass needs:
 -- 2D geometries
 
 
-local PolarHolGeom = class(Geometry)
-PolarHolGeom.coords = {'r', 'θ'}
+local PolarGeom = class(Geometry)
+PolarGeom.coords = {'r', 'θ'}
 -- [[ initialize our basis of e=I at r=1 ...
-PolarHolGeom.xmin = matrix{1, 0}
-PolarHolGeom.xmax = matrix{10, 2 * math.pi}
-PolarHolGeom.startCoord = {1,0}
+PolarGeom.xmin = matrix{1, 0}
+PolarGeom.xmax = matrix{10, 2 * math.pi}
+PolarGeom.startCoord = {1,0}
 --]]
 --[[ applying a rotation, e=I at r=1 and theta!=0 still produces the same shape.
-PolarHolGeom.xmin = matrix{1, 0}
-PolarHolGeom.xmax = matrix{10, 2 * math.pi}
-PolarHolGeom.startCoord = {1, math.pi/2}
+PolarGeom.xmin = matrix{1, 0}
+PolarGeom.xmax = matrix{10, 2 * math.pi}
+PolarGeom.startCoord = {1, math.pi/2}
 --]]
 --[[ ...otherwise the shape gets messed up -- for r=2
-PolarHolGeom.xmin = matrix{1, 0}
-PolarHolGeom.xmax = matrix{10, 2 * math.pi}
-PolarHolGeom.startCoord = {2,0}
+PolarGeom.xmin = matrix{1, 0}
+PolarGeom.xmax = matrix{10, 2 * math.pi}
+PolarGeom.startCoord = {2,0}
 --]]
 --[[ ...otherwise the shape gets messed up -- for r=1/2 (needs the range readjusted so rmin isn't 1)
-PolarHolGeom.xmin = matrix{.1, 0}
-PolarHolGeom.xmax = matrix{2, 2 * math.pi}
-PolarHolGeom.startCoord = {.5,0}
+PolarGeom.xmin = matrix{.1, 0}
+PolarGeom.xmax = matrix{2, 2 * math.pi}
+PolarGeom.startCoord = {.5,0}
 --]] 
-function PolarHolGeom:createMetric()
+-- [[ analytically
+function PolarGeom:createMetric()
 	local r, theta = self.coordVars:unpack()
 	return symmath.Tensor('_ab', {1, 0}, {0, r^2})
 end
+--]]
+--[[ purely numerically
+function PolarGeom:calc_conns()
+	return self.app.size:lambda(function(...)
+		local x = self.app.xs[{...}]
+		local r, theta = x:unpack()
+		-- 1/Γ^θ_θr = 1/Γ^θ_rθ = -Γ^r_θθ = r
+		return matrix{
+			{
+				{0, 0},
+				{0, -r},
+			},
+			{
+				{0, 1/r},
+				{1/r, 0},
+			},
+		}
+	end)
+end
+--]]
 
 
 -- The thing about non-holonomic geometry is
@@ -245,12 +276,12 @@ end
 -- Otherwise how does it know how far to integrate the geodesics
 -- to get to the next coordinate location?
 -- This information is typically stored in the metric of the holonomic coordinate map.
-local PolarNonHolGeom = class(Geometry)
-PolarNonHolGeom.coords = {'r', 'θ'}
-PolarNonHolGeom.xmin = matrix{1, 0}
-PolarNonHolGeom.xmax = matrix{10, 2 * math.pi}
-PolarNonHolGeom.startCoord = {1,0}
-function PolarNonHolGeom:calc_conns()
+local PolarAnholonomicGeom = class(Geometry)
+PolarAnholonomicGeom.coords = {'r', 'θ'}
+PolarAnholonomicGeom.xmin = matrix{1, 0}
+PolarAnholonomicGeom.xmax = matrix{10, 2 * math.pi}
+PolarAnholonomicGeom.startCoord = {1,0}
+function PolarAnholonomicGeom:calc_conns()
 	return self.app.size:lambda(function(i,j)
 		local r = self.app.xs[i][j][1]
 		-- Γ^θ_rθ = -Γ^r_θθ = 1/r
@@ -265,62 +296,139 @@ end
 
 -- sphere surface likewise is a 2 dimensional system inside 3 dimensions
 -- like cyl surface, it needs extrinsic curvature information to be properly rebuilt 
-local SphereSurfaceHolGeom = class(Geometry)
+local SphereSurfaceGeom = class(Geometry)
 local eps = .01
-SphereSurfaceHolGeom.coords = {'θ', 'phi'}
-SphereSurfaceHolGeom.xmin = matrix{eps, eps}
-SphereSurfaceHolGeom.xmax = matrix{math.pi-eps, 2*math.pi-eps}
+SphereSurfaceGeom.coords = {'θ', 'phi'}
+SphereSurfaceGeom.xmin = matrix{eps, eps}
+SphereSurfaceGeom.xmax = matrix{math.pi-eps, 2*math.pi-eps}
 
-SphereSurfaceHolGeom.startCoord = {math.pi/2, math.pi}	-- poles along x axis
---SphereSurfaceHolGeom.startCoord = {2*eps, math.pi}			-- stretched to infinite becuase of infinite connections
---SphereSurfaceHolGeom.startCoord = {math.pi/4, math.pi}
---SphereSurfaceHolGeom.startCoord = {math.pi/2, 2*eps}		-- mostly y>0
---SphereSurfaceHolGeom.startCoord = {math.pi/2, math.pi*2-2*eps}	-- mostly y<0
-function SphereSurfaceHolGeom:createMetric()
+SphereSurfaceGeom.startCoord = {math.pi/2, math.pi}	-- poles along x axis
+--SphereSurfaceGeom.startCoord = {2*eps, math.pi}			-- stretched to infinite becuase of infinite connections
+--SphereSurfaceGeom.startCoord = {math.pi/4, math.pi}
+--SphereSurfaceGeom.startCoord = {math.pi/2, 2*eps}		-- mostly y>0
+--SphereSurfaceGeom.startCoord = {math.pi/2, math.pi*2-2*eps}	-- mostly y<0
+function SphereSurfaceGeom:createMetric()
 	local theta, phi = self.coordVars:unpack()
 	local r = 1
 	return symmath.Tensor('_ab', {r^2, 0}, {0, r^2 * symmath.sin(theta)^2})
 end
 
 
-local PoincareDisk = class(Geometry)
-PoincareDisk.coords = {'u', 'v'}
-PoincareDisk.xmin = {-1, -1}
-PoincareDisk.xmax = {1, 1}
-PoincareDisk.startCoord = {0, 0}
-function PoincareDisk:createMetric()
+local TorusSurfaceGeom = class(Geometry)
+TorusSurfaceGeom.coords = {'θ', 'φ'}
+TorusSurfaceGeom.xmin = {-math.pi, -math.pi}
+TorusSurfaceGeom.xmax = {math.pi, math.pi}
+TorusSurfaceGeom.startCoord = {0, 0}
+function TorusSurfaceGeom:createMetric()
+	local theta, phi = self.coordVars:unpack()
+	local r = 2
+	local R = 5
+	return symmath.Tensor('_ab', {r^2, 0}, {0, (R + r * symmath.sin(theta))^2})
+end
+
+local PoincareDisk2D = class(Geometry)
+PoincareDisk2D.coords = {'u', 'v'}
+PoincareDisk2D.xmin = {-1, -1}
+PoincareDisk2D.xmax = {1, 1}
+PoincareDisk2D.startCoord = {0, 0}
+function PoincareDisk2D:createMetric()
 	local u, v = self.coordVars:unpack()
 	return symmath.Tensor('_ab', {4 / (1 - u^2 - v^2), 0}, {0, 4 / (1 - u^2 - v^2)})
 end
 
+
+-- hmm, how to incorporate signature into the metric ...
+local Minkowski2D = class(Geometry)
+Minkowski2D.coords = {'t', 'x'}
+Minkowski2D.xmin = {-1, -1}
+Minkowski2D.xmax = {1, 1}
+Minkowski2D.startCoord = {0,0}
+function Minkowski2D:createMetric()
+	return symmath.Tensor('_ab', {-1, 0}, {0, 1})
+end
+
+
 -- 3D geometries
 
 
-local CylHolGeom = class(Geometry)
-CylHolGeom.coords = {'r', 'θ', 'z'}
-CylHolGeom.xmin = {1, 0, -5}
-CylHolGeom.xmax = {10, 2*math.pi, 5}
-CylHolGeom.startCoord = {1,math.pi,0}
-function CylHolGeom:createMetric()
+local CylGeom = class(Geometry)
+CylGeom.coords = {'r', 'θ', 'z'}
+CylGeom.xmin = {1, 0, -5}
+CylGeom.xmax = {10, 2*math.pi, 5}
+CylGeom.startCoord = {1,math.pi,0}
+function CylGeom:createMetric()
 	local r, theta, z = self.coordVars:unpack()
 	return symmath.Tensor('_ab', {1, 0, 0}, {0, r^2, 0}, {0, 0, 1})
 end
 
 
-local SphereHolGeom = class(Geometry)
+local SphereGeom = class(Geometry)
 local eps = .05	-- the holonomic connection gets singularities (cot theta = inf) at the boundaries
 				-- this could be avoided if the metric was evaluated at grid centers instead of vertices.
-SphereHolGeom.coords = {'r', 'θ', 'φ'}
-SphereHolGeom.xmin = {1, eps, -math.pi + eps}
-SphereHolGeom.xmax = {10, math.pi - eps, math.pi - eps}
---SphereHolGeom.startCoord = {1, math.pi/2, 0}
---SphereHolGeom.startCoord = {2, math.pi/2, 0}	-- squashed to an ellipsoid, just like the polar case
---SphereHolGeom.startCoord = {1, math.pi/2, math.pi-2*eps}	-- changing phi_0 doesn't affect it at all though
-function SphereHolGeom:createMetric()
+SphereGeom.coords = {'r', 'θ', 'φ'}
+SphereGeom.xmin = {1, eps, -math.pi + eps}
+SphereGeom.xmax = {10, math.pi - eps, math.pi - eps}
+SphereGeom.startCoord = {1, math.pi/2, 0}
+--SphereGeom.startCoord = {2, math.pi/2, 0}	-- squashed to an ellipsoid, just like the polar case
+--SphereGeom.startCoord = {1, math.pi/2, math.pi-2*eps}	-- changing phi_0 doesn't affect it at all though
+--SphereGeom.startCoord = {2, math.pi/2, math.pi-2*eps}	-- ... though it does a tiny bit (makes some waves in the coordinate system) if r_0 is not 1 
+function SphereGeom:createMetric()
 	local r, theta, phi = self.coordVars:unpack()
 	return symmath.Tensor('_ab', {1,0,0}, {0, r^2, 0}, {0, 0, r^2 * symmath.sin(theta)^2})
 end
 
+
+local TorusGeom = class(Geometry)
+TorusGeom.coords = {'r', 'θ', 'φ'}
+TorusGeom.xmin = {1, -math.pi, -math.pi}
+TorusGeom.xmax = {2, math.pi, math.pi}
+TorusGeom.startCoord = {1, -math.pi, -math.pi}
+function TorusGeom:createMetric()
+	local r, theta, phi = self.coordVars:unpack()
+	local R = 5
+	return symmath.Tensor('_ab', {1, 0, 0}, {0, r^2, 0}, {0, 0, (R + r * symmath.sin(theta))^2})	-- does sin(theta) work as well?
+end
+
+
+local PoincareDisk3D = class(Geometry)
+PoincareDisk3D.coords = {'u', 'v', 'w'}
+PoincareDisk3D.xmin = {-1, -1, -1}
+PoincareDisk3D.xmax = {1, 1, 1}
+PoincareDisk3D.startCoord = {0, 0, 0}
+function PoincareDisk3D:createMetric()
+	local u, v, w = self.coordVars:unpack()
+	return symmath.Tensor('_ab', {4 / (1 - u^2 - v^2 - w^2), 0, 0}, {0, 4 / (1 - u^2 - v^2 - w^2), 0}, {0, 0, 4 / (1 - u^2 - v^2 - w^2)})
+end
+
+
+-- here's a connection coefficient that gives rise to the stress-energy of a uniform electric field 
+local UniformElectricNum = class(Geometry)
+UniformElectricNum.coords = {'t', 'x', 'y'}		-- ut oh, now we introduce metric signatures ... 
+UniformElectricNum.xmin = {-1, -1, -1}
+UniformElectricNum.xmax = {1, 1, 1}
+UniformElectricNum.startCoord = {0, 0, 0}
+function UniformElectricNum:calc_conns()
+	return self.app.size:lambda(function(i,j,k)
+		local E = 1
+		return matrix{
+			{
+				{0,E,0},
+				{E,0,0},
+				{0,0,0},
+			},
+			{
+				{-E,0,0},
+				{0,0,0},
+				{0,0,E},
+			},
+			{
+				{0,0,0},
+				{0,0,0},
+				{0,0,0},
+			},
+		}
+	end)
+end
 
 local function I(x)
 	return function()
@@ -335,16 +443,44 @@ App.title = 'reconstruct surface from geodesics'
 App.viewDist = 10
 
 function App:initGL()
+	App.super.initGL(self)
 	gl.glEnable(gl.GL_DEPTH_TEST)
 
+	self.animShader = GLProgram{
+		vertexCode = [[
+varying vec4 color;
+uniform float t;
+void main() {
+	color = gl_Color;
+	
+	vec3 pos1 = gl_Vertex.xyz; 
+	vec3 pos2 = gl_MultiTexCoord0.xyz;
+	vec3 pos = mix(pos1, pos2, t);
+	gl_Position = gl_ModelViewProjectionMatrix * vec4(pos, 1.);
+}
+]],
+		fragmentCode = [[
+varying vec4 color;
+void main() {
+	gl_FragColor = color;
+}
+]],
+		uniforms = {t = 0},
+	}
+
 	-- 2D
-	--self.geom = PolarHolGeom(self)
-	--self.geom = PolarNonHolGeom(self)
-	--self.geom = SphereSurfaceHolGeom(self)	-- in absence of extrinsic curvature, this creates a polyconic projection
-	--self.geom = PoincareDisk(self)
+	--self.geom = PolarGeom(self)
+	--self.geom = PolarAnholonomicGeom(self)
+	--self.geom = SphereSurfaceGeom(self)	-- in absence of extrinsic curvature, this creates a polyconic projection
+	--self.geom = TorusSurfaceGeom(self)
+	--self.geom = PoincareDisk2D(self)
+	--self.geom = Minkowski2D(self)
 	-- 3D
-	--self.geom = CylHolGeom(self)
-	self.geom = SphereHolGeom(self)
+	--self.geom = CylGeom(self)
+	--self.geom = SphereGeom(self)
+	--self.geom = TorusGeom(self)
+	--self.geom = PoincareDisk3D(self)
+	self.geom = UniformElectricNum(self)
 
 	local n = #self.geom.coords
 	self.size = matrix{n}:lambda(I( ({[2]=64, [3]=16})[n] ))
@@ -366,7 +502,7 @@ function App:initGL()
 	--]]
 
 	-- if we are calculating the connection from discrete derivatives of the metric ...
-	if self.geom.calc_gs then
+	if self.geom.createMetric then
 		local gs = self.geom:calc_gs() 
 		--or self.size:lambda(function(...) return matrix{n,n}:ident() end)
 		local gUs = self.size:lambda(function(...)
@@ -660,29 +796,14 @@ print('e='..e)
 	-- recenter ...
 	local com = matrix{n}:lambda(I(0))
 	for i in self.size:range() do
-		com = com + self.Xs[i]
+		if self.Xs[i]:isfinite() then
+			com = com + self.Xs[i]
+		end
 	end
 	com = com / self.size:prod()
 	for i in self.size:range() do
 		self.Xs[i] = self.Xs[i] - com
 	end
-end
-
-local function glColor(m)
-	if #m == 2 then
-		gl.glColor3d(m[1], m[2], .5)
-	elseif #m == 3 then
-		gl.glColor3d(m:unpack())
-	else
-		error"can't color this many dimensions"
-	end
-end
-
-local function glVertex(m)
-	assert(({
-		[2] = gl.glVertex2d,
-		[3] = gl.glVertex3d,
-	})[#m])(m:unpack())
 end
 
 function App:drawGrid()
@@ -723,6 +844,34 @@ function App:drawGrid()
 	gl.glEnd()
 end
 
+
+local function glColor(m)
+	if #m == 2 then
+		gl.glColor3d(m[1], m[2], .5)
+	elseif #m == 3 then
+		gl.glColor3d(m:unpack())
+	else
+		error"can't color this many dimensions"
+	end
+end
+
+local function glTexCoord(m)
+	assert(({
+		[2] = gl.glTexCoord2d,
+		[3] = gl.glTexCoord3d,
+	})[#m])(m:unpack())
+end
+
+local function glVertex(m)
+	assert(({
+		[2] = gl.glVertex2d,
+		[3] = gl.glVertex3d,
+	})[#m])(m:unpack())
+end
+
+local animating = false
+local animTime = ffi.new('float[1]', 0)
+local lastTime = 0
 function App:update()
 	gl.glClear(bit.bor(gl.GL_COLOR_BUFFER_BIT, gl.GL_DEPTH_BUFFER_BIT))
 		
@@ -730,10 +879,19 @@ function App:update()
 
 	local n = #self.size
 
+	local thisTime = os.clock()	
+	if animating then
+		local deltaTime = (thisTime - lastTime) / math.pi
+		animTime[0] = (((animTime[0] + deltaTime) + 1) % 2) - 1
+	end
+	lastTime = thisTime
+	
+	self.animShader:use()
+
+	gl.glUniform1f(self.animShader.uniforms.t.loc, .5 - .5 * math.cos(math.pi * animTime[0]))
+
 	self.list = self.list or {}
 	glCall(self.list, function()
-print'building GL call list...'
-
 		--gl.glColor3f(0,1,1)
 		gl.glBegin(gl.GL_LINES)
 		local sizeMinusOne = self.size-1
@@ -744,8 +902,10 @@ print'building GL call list...'
 					local nextIndex = matrix(index)
 					nextIndex[k] = nextIndex[k] + 1
 					glColor((index-1):ediv(sizeMinusOne))
+					glTexCoord(self.xs[index])
 					glVertex(self.Xs[index])
 					glColor((nextIndex-1):ediv(sizeMinusOne))
+					glTexCoord(self.xs[nextIndex])
 					glVertex(self.Xs[nextIndex])
 				end
 			end
@@ -779,8 +939,38 @@ print'building GL call list...'
 --]]	
 	end)
 
+	GLProgram:useNone()
+
 	if n == 2 then
 		self:drawGrid()
+	end
+end
+
+local function hoverTooltip(name)
+	if ig.igIsItemHovered() then
+		ig.igBeginTooltip()
+		ig.igText(name)
+		ig.igEndTooltip()
+	end
+end
+
+local function sliderTooltip(name, ptr, vmin, vmax)
+	ig.igPushIdStr(name)
+	ig.igSliderFloat('', ptr, vmin, vmax)
+	hoverTooltip(name)
+	ig.igPopId()
+end
+
+local controlsOpened = ffi.new('bool[1]', true)
+function App:updateGUI()
+	if ig.igBegin('Controls', controlsOpened) then
+		if ig.igButton(animating and 'Stop' or 'Start') then
+			animating = not animating
+		end
+		
+		sliderTooltip('animation coefficient', animTime, -1, 1)
+		
+		ig.igEnd()
 	end
 end
 
