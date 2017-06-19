@@ -8,12 +8,11 @@ local glCall = require 'gl.call'
 local GLProgram = require 'gl.program'
 local matrix = require 'matrix'
 local complex = require 'symmath.complex'
-local symmath = require 'symmath'
 local gnuplot = require 'gnuplot'
 local ImGuiApp = require 'imguiapp'
 local View = require 'glapp.view'
 local Orbit = require 'glapp.orbit'
-
+local symmath = require 'symmath'
 
 local function int_fe(r, q, dq_dr, dr)
 	return q + dq_dr(r, q) * dr, r + dr
@@ -128,6 +127,13 @@ function matrix:inv()
 	end
 end
 
+
+--local surfaceBuildOrder = 'first'
+local surfaceBuildOrder = 'last'
+--local surfaceBuildOrder = 'random'
+--local surfaceBuildOrder = 'middle'
+
+
 -- used for providing initial values for the metric
 -- and verifying accuracy of numerical calculations
 local Geometry = class()
@@ -141,15 +147,14 @@ function Geometry:init(app)
 		return symmath.var(name)
 	end)
 
-	local Tensor = symmath.Tensor
 	if self.createMetric then
-		Tensor.coords{{variables=self.coordVars}}
+		symmath.Tensor.coords{{variables=self.coordVars}}
 		local n = #self.coords
 		local g = self:createMetric()
-		local gU = Tensor('^ab', table.unpack( (symmath.Matrix.inverse(g)) ))
-		local dg = Tensor('_abc', table.unpack(g'_ab,c'()))
-		local ConnL = Tensor('_abc', table.unpack( ((dg'_abc' + dg'_acb' - dg'_bca')/2)() ))
-		local Conn = Tensor('^a_bc', table.unpack( (gU'^ad' * ConnL'_dbc')() ))	
+		local gU = symmath.Tensor('^ab', table.unpack( (symmath.Matrix.inverse(g)) ))
+		local dg = symmath.Tensor('_abc', table.unpack(g'_ab,c'()))
+		local ConnL = symmath.Tensor('_abc', table.unpack( ((dg'_abc' + dg'_acb' - dg'_bca')/2)() ))
+		local Conn = symmath.Tensor('^a_bc', table.unpack( (gU'^ad' * ConnL'_dbc')() ))	
 		self.calc = {
 			g = self:compileTensor(g),
 			Conn = self:compileTensor(Conn),
@@ -159,7 +164,7 @@ end
 
 function Geometry:testExact()
 	local app = self.app
-	local exactConns = self:calc_conns()
+	local exactConns = self:calcFromEqns_conns()
 	local connNumConnDiff = app.size:lambda(function(i,j)
 		return (app.conns[i][j] - exactConns[i][j]):norm()
 	end)
@@ -191,7 +196,7 @@ function Geometry:compileTensor(expr)
 	end
 end
 
-function Geometry:calc_gs()
+function Geometry:calcFromEqns_gs()
 	if not self.calc.g then return end
 	local app = self.app
 	return app.size:lambda(function(...)
@@ -200,7 +205,7 @@ function Geometry:calc_gs()
 end
 
 -- this is only used for comparing the error between the numerical and the exact connections
-function Geometry:calc_conns()
+function Geometry:calcFromEqns_conns()
 	if not self.calc.Conn then return end
 	return self.app.size:lambda(function(...)
 		return self.calc.Conn(self.app.xs[{...}])
@@ -215,7 +220,7 @@ what each geometry subclass needs:
 * startCoord (where to start the surface generation at.  this is very important.
 * one of the two:
 	* createMetric, if the geometry is to use an analytical metric 
-	* calc_conns.  otherwise these return identity g_ab's and zero Conn^a_bc's.
+	* create_conns.  otherwise these return identity g_ab's and zero Conn^a_bc's.
 --]]
 
 
@@ -251,7 +256,7 @@ function PolarGeom:createMetric()
 end
 --]]
 --[[ purely numerically
-function PolarGeom:calc_conns()
+function PolarGeom:create_conns()
 	return self.app.size:lambda(function(...)
 		local x = self.app.xs[{...}]
 		local r, theta = x:unpack()
@@ -281,7 +286,7 @@ PolarAnholonomicGeom.coords = {'r', 'θ'}
 PolarAnholonomicGeom.xmin = matrix{1, 0}
 PolarAnholonomicGeom.xmax = matrix{10, 2 * math.pi}
 PolarAnholonomicGeom.startCoord = {1,0}
-function PolarAnholonomicGeom:calc_conns()
+function PolarAnholonomicGeom:create_conns()
 	return self.app.size:lambda(function(i,j)
 		local r = self.app.xs[i][j][1]
 		-- Γ^θ_rθ = -Γ^r_θθ = 1/r
@@ -348,6 +353,44 @@ function Minkowski2D:createMetric()
 end
 
 
+-- here's Schwarzschild in time and in radial 
+-- it is treating Rs as constant, which means this metric is true for the spacetime *outside* of the massive body
+local Schwarzschild1Plus1 = class(Geometry)
+Schwarzschild1Plus1.coords = {'r', 't'}
+Schwarzschild1Plus1.xmin = {-2, -2}
+Schwarzschild1Plus1.xmax = {2, 2}
+Schwarzschild1Plus1.startCoord = {2, 0}
+function Schwarzschild1Plus1:createMetric()
+	local r, t = self.coordVars:unpack()
+	local mass = .1
+	return symmath.Tensor('_ab', {1/(1 - 2 * mass / r), 0}, {0, 1 - 2 * mass / r})
+end
+
+-- Schwarzschild in time and radial
+-- backwards from traditional order: r, t (so that time can point upwards)
+-- except for within and outside of the matter source
+-- this is my first metric that is based on numerically specifying g_ab, then computing Conn^a_bc
+-- since this doesn't have an extra dimension to anchor it, as the spacetime grows from r+ to r- it gets really twisted
+local Schwarzschild1Plus1EOS = class(Geometry)
+Schwarzschild1Plus1EOS.coords = {'r', 't'}
+Schwarzschild1Plus1EOS.xmin = {-2, -2}
+Schwarzschild1Plus1EOS.xmax = {2, 2}
+Schwarzschild1Plus1EOS.startCoord = {2, 0}
+function Schwarzschild1Plus1EOS:create_gs()
+	return self.app.size:lambda(function(...)
+		local r, t = self.app.xs[{...}]:unpack()
+		local mass = .1
+		local radius = 1
+		local radialFrac = math.max(math.abs(r), radius) / radius
+		local massWithinRadius = radialFrac * mass
+		return matrix{
+			{1/(1 - 2 * massWithinRadius / r), 0},
+			{0, 1 - 2 * massWithinRadius / r},
+		}
+	end)
+end
+
+
 -- 3D geometries
 
 
@@ -407,8 +450,8 @@ UniformElectricNum.coords = {'t', 'x', 'y'}		-- ut oh, now we introduce metric s
 UniformElectricNum.xmin = {-1, -1, -1}
 UniformElectricNum.xmax = {1, 1, 1}
 UniformElectricNum.startCoord = {0, 0, 0}
-function UniformElectricNum:calc_conns()
-	return self.app.size:lambda(function(i,j,k)
+function UniformElectricNum:create_conns()
+	return self.app.size:lambda(function(...)
 		local E = 1
 		return matrix{
 			{
@@ -429,6 +472,56 @@ function UniformElectricNum:calc_conns()
 		}
 	end)
 end
+
+
+-- Schwarzschild in time and radial
+-- backwards from traditional order: r, t (so that time can point upwards)
+-- except for within and outside of the matter source
+-- this is my first metric that is based on numerically specifying g_ab, then computing Conn^a_bc
+-- since this doesn't have an extra dimension to anchor it, as the spacetime grows from r+ to r- it gets really twisted
+local Schwarzschild2Plus1EOS = class(Geometry)
+Schwarzschild2Plus1EOS.coords = {'t', 'x', 'y'}
+Schwarzschild2Plus1EOS.xmin = {-2, -2, -2}
+Schwarzschild2Plus1EOS.xmax = {2, 2, 2}
+--Schwarzschild2Plus1EOS.startCoord = {0, 2, 2}
+Schwarzschild2Plus1EOS.startCoord = {0, 0, 0}
+function Schwarzschild2Plus1EOS:create_gs()
+	return self.app.size:lambda(function(...)
+		local t, x, y = self.app.xs[{...}]:unpack()
+		local mass = .05
+		local radius = 1
+		local r = math.sqrt(x*x + y*y)
+		local radialFrac = math.max(math.abs(r), radius) / radius
+		local massWithinRadius = radialFrac * mass
+		return matrix{
+			{1 - 2 * massWithinRadius / r, 0, 0},
+			{0, 1/(1 - 2 * massWithinRadius / r), 0},
+			{0, 0, 1/(1 - 2 * massWithinRadius / r)},
+		}
+	end)
+end
+
+
+local SchwarzschildSphere2Plus1EOS = class(Geometry)
+SchwarzschildSphere2Plus1EOS.coords = {'t', 'r', 'φ'}
+SchwarzschildSphere2Plus1EOS.xmin = {-2, .1, -math.pi}
+SchwarzschildSphere2Plus1EOS.xmax = {2, 2, math.pi}
+SchwarzschildSphere2Plus1EOS.startCoord = {0, 1, 0}
+function SchwarzschildSphere2Plus1EOS:create_gs()
+	return self.app.size:lambda(function(...)
+		local t, r, phi = self.app.xs[{...}]:unpack()
+		local mass = .05
+		local radius = 1
+		local radialFrac = math.max(r, radius) / radius
+		local massWithinRadius = radialFrac * mass
+		return matrix{
+			{1 - 2 * massWithinRadius / r, 0, 0},
+			{0, 1/(1 - 2 * massWithinRadius / r), 0},
+			{0, 0, r*r},
+		}
+	end)
+end
+
 
 local function I(x)
 	return function()
@@ -475,12 +568,16 @@ void main() {
 	--self.geom = TorusSurfaceGeom(self)
 	--self.geom = PoincareDisk2D(self)
 	--self.geom = Minkowski2D(self)
+	--self.geom = Schwarzschild1Plus1(self)
+	--self.geom = Schwarzschild1Plus1EOS(self)
 	-- 3D
 	--self.geom = CylGeom(self)
 	--self.geom = SphereGeom(self)
 	--self.geom = TorusGeom(self)
 	--self.geom = PoincareDisk3D(self)
-	self.geom = UniformElectricNum(self)
+	--self.geom = UniformElectricNum(self)
+	--self.geom = Schwarzschild2Plus1EOS(self)
+	self.geom = SchwarzschildSphere2Plus1EOS(self)
 
 	local n = #self.geom.coords
 	self.size = matrix{n}:lambda(I( ({[2]=64, [3]=16})[n] ))
@@ -502,8 +599,10 @@ void main() {
 	--]]
 
 	-- if we are calculating the connection from discrete derivatives of the metric ...
-	if self.geom.createMetric then
-		local gs = self.geom:calc_gs() 
+	if self.geom.createMetric 
+	or self.geom.create_gs
+	then
+		local gs = self.geom.create_gs and self.geom:create_gs() or self.geom:calcFromEqns_gs() 
 		--or self.size:lambda(function(...) return matrix{n,n}:ident() end)
 		local gUs = self.size:lambda(function(...)
 			return gs[{...}]:inv()
@@ -549,12 +648,13 @@ void main() {
 			end
 			return check2
 		end)
-		if self.geom and self.geom.calc_conns then
+		if self.geom and self.geom.create_conns then
 			self.geom:testExact()
 		end
+	
 	else
-		-- if calc_gs isn't there, then rely on calc_conns for providing the initial connections
-		self.conns = self.geom:calc_conns()
+		-- if calcFromEqns_gs isn't there, then rely on create_conns for providing the initial connections
+		self.conns = self.geom:create_conns()
 	end
 
 	-- embedded space position
@@ -566,7 +666,7 @@ void main() {
 	end)
 
 	local xInit = matrix(assert(self.geom.startCoord))
-	local i = ((xInit - self.geom.xmin):ediv(self.geom.xmax - self.geom.xmin):emul(self.size-2) + 2.5):map(math.floor)
+	local i = ((xInit - self.geom.xmin):ediv(self.geom.xmax - self.geom.xmin):emul(self.size-3) + 2.5):map(math.floor)
 	self.es[i] = matrix{n,n}:ident()
 	local function withinEdge(index,size)
 		for i=1,n do
@@ -780,12 +880,17 @@ print('e='..e)
 --print('e2 from '..eOrig(_,2)..' to '..e(_,2)..' changing by '..(eOrig(_,2) - e(_,2)):norm())
 --print('|e2| from '..eOrig(_,2):norm()..' to '..e(_,2):norm()..' changing by '..(e(_,2):norm() - eOrig(_,2):norm()))
 --print('X from '..XOrig..' to '..X..' changing by '..(X - XOrig):norm())
-					
-					todo:insert(nextIndex)
-					--todo:insert(math.random(#todo+1), nextIndex)
-					--todo:insert(math.floor((#todo+1)/2), nextIndex)
-					-- the linear dynamic system method only works right for polar coordinates when we use this order
-					--todo:insert(1, nextIndex)
+
+					if surfaceBuildOrder == 'last' then
+						todo:insert(nextIndex)
+					elseif surfaceBuildOrder == 'random' then
+						todo:insert(math.random(#todo+1), nextIndex)
+					elseif surfaceBuildOrder == 'middle' then
+						todo:insert(math.floor((#todo+1)/2), nextIndex)
+					elseif surfaceBuildOrder == 'first' then
+						-- the linear dynamic system method only works right for polar coordinates when we use this order
+						todo:insert(1, nextIndex)
+					end
 					sofar[tostring(nextIndex)] = true
 				end
 			end	
@@ -874,8 +979,6 @@ local animTime = ffi.new('float[1]', 0)
 local lastTime = 0
 function App:update()
 	gl.glClear(bit.bor(gl.GL_COLOR_BUFFER_BIT, gl.GL_DEPTH_BUFFER_BIT))
-		
-	App.super.update(self)
 
 	local n = #self.size
 
@@ -944,6 +1047,8 @@ function App:update()
 	if n == 2 then
 		self:drawGrid()
 	end
+		
+	App.super.update(self)
 end
 
 local function hoverTooltip(name)
