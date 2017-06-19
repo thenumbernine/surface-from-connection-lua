@@ -142,6 +142,7 @@ function Geometry:init(app)
 	self.app = app
 	self.xmin = matrix(self.xmin)
 	self.xmax = matrix(self.xmax)
+	self.startCoord = matrix(self.startCoord)
 
 	self.coordVars = table.map(self.coords, function(name)
 		return symmath.var(name)
@@ -227,36 +228,36 @@ what each geometry subclass needs:
 -- 2D geometries
 
 
-local PolarGeom = class(Geometry)
-PolarGeom.coords = {'r', 'θ'}
+local Polar = class(Geometry)
+Polar.coords = {'r', 'θ'}
 -- [[ initialize our basis of e=I at r=1 ...
-PolarGeom.xmin = matrix{1, 0}
-PolarGeom.xmax = matrix{10, 2 * math.pi}
-PolarGeom.startCoord = {1,0}
+Polar.xmin = matrix{1, 0}
+Polar.xmax = matrix{10, 2 * math.pi}
+Polar.startCoord = {1,0}
 --]]
 --[[ applying a rotation, e=I at r=1 and theta!=0 still produces the same shape.
-PolarGeom.xmin = matrix{1, 0}
-PolarGeom.xmax = matrix{10, 2 * math.pi}
-PolarGeom.startCoord = {1, math.pi/2}
+Polar.xmin = matrix{1, 0}
+Polar.xmax = matrix{10, 2 * math.pi}
+Polar.startCoord = {1, math.pi/2}
 --]]
 --[[ ...otherwise the shape gets messed up -- for r=2
-PolarGeom.xmin = matrix{1, 0}
-PolarGeom.xmax = matrix{10, 2 * math.pi}
-PolarGeom.startCoord = {2,0}
+Polar.xmin = matrix{1, 0}
+Polar.xmax = matrix{10, 2 * math.pi}
+Polar.startCoord = {2,0}
 --]]
 --[[ ...otherwise the shape gets messed up -- for r=1/2 (needs the range readjusted so rmin isn't 1)
-PolarGeom.xmin = matrix{.1, 0}
-PolarGeom.xmax = matrix{2, 2 * math.pi}
-PolarGeom.startCoord = {.5,0}
+Polar.xmin = matrix{.1, 0}
+Polar.xmax = matrix{2, 2 * math.pi}
+Polar.startCoord = {.5,0}
 --]] 
 -- [[ analytically
-function PolarGeom:createMetric()
+function Polar:createMetric()
 	local r, theta = self.coordVars:unpack()
 	return symmath.Tensor('_ab', {1, 0}, {0, r^2})
 end
 --]]
 --[[ purely numerically
-function PolarGeom:create_conns()
+function Polar:create_conns()
 	return self.app.size:lambda(function(...)
 		local x = self.app.xs[{...}]
 		local r, theta = x:unpack()
@@ -281,12 +282,12 @@ end
 -- Otherwise how does it know how far to integrate the geodesics
 -- to get to the next coordinate location?
 -- This information is typically stored in the metric of the holonomic coordinate map.
-local PolarAnholonomicGeom = class(Geometry)
-PolarAnholonomicGeom.coords = {'r', 'θ'}
-PolarAnholonomicGeom.xmin = matrix{1, 0}
-PolarAnholonomicGeom.xmax = matrix{10, 2 * math.pi}
-PolarAnholonomicGeom.startCoord = {1,0}
-function PolarAnholonomicGeom:create_conns()
+local PolarAnholonomic = class(Geometry)
+PolarAnholonomic.coords = {'r', 'θ'}
+PolarAnholonomic.xmin = matrix{1, 0}
+PolarAnholonomic.xmax = matrix{10, 2 * math.pi}
+PolarAnholonomic.startCoord = {1,0}
+function PolarAnholonomic:create_conns()
 	return self.app.size:lambda(function(i,j)
 		local r = self.app.xs[i][j][1]
 		-- Γ^θ_rθ = -Γ^r_θθ = 1/r
@@ -301,30 +302,30 @@ end
 
 -- sphere surface likewise is a 2 dimensional system inside 3 dimensions
 -- like cyl surface, it needs extrinsic curvature information to be properly rebuilt 
-local SphereSurfaceGeom = class(Geometry)
+local SphereSurface = class(Geometry)
 local eps = .01
-SphereSurfaceGeom.coords = {'θ', 'phi'}
-SphereSurfaceGeom.xmin = matrix{eps, eps}
-SphereSurfaceGeom.xmax = matrix{math.pi-eps, 2*math.pi-eps}
+SphereSurface.coords = {'θ', 'phi'}
+SphereSurface.xmin = matrix{eps, eps}
+SphereSurface.xmax = matrix{math.pi-eps, 2*math.pi-eps}
 
-SphereSurfaceGeom.startCoord = {math.pi/2, math.pi}	-- poles along x axis
---SphereSurfaceGeom.startCoord = {2*eps, math.pi}			-- stretched to infinite becuase of infinite connections
---SphereSurfaceGeom.startCoord = {math.pi/4, math.pi}
---SphereSurfaceGeom.startCoord = {math.pi/2, 2*eps}		-- mostly y>0
---SphereSurfaceGeom.startCoord = {math.pi/2, math.pi*2-2*eps}	-- mostly y<0
-function SphereSurfaceGeom:createMetric()
+SphereSurface.startCoord = {math.pi/2, math.pi}	-- poles along x axis
+--SphereSurface.startCoord = {2*eps, math.pi}			-- stretched to infinite becuase of infinite connections
+--SphereSurface.startCoord = {math.pi/4, math.pi}
+--SphereSurface.startCoord = {math.pi/2, 2*eps}		-- mostly y>0
+--SphereSurface.startCoord = {math.pi/2, math.pi*2-2*eps}	-- mostly y<0
+function SphereSurface:createMetric()
 	local theta, phi = self.coordVars:unpack()
 	local r = 1
 	return symmath.Tensor('_ab', {r^2, 0}, {0, r^2 * symmath.sin(theta)^2})
 end
 
 
-local TorusSurfaceGeom = class(Geometry)
-TorusSurfaceGeom.coords = {'θ', 'φ'}
-TorusSurfaceGeom.xmin = {-math.pi, -math.pi}
-TorusSurfaceGeom.xmax = {math.pi, math.pi}
-TorusSurfaceGeom.startCoord = {0, 0}
-function TorusSurfaceGeom:createMetric()
+local TorusSurface = class(Geometry)
+TorusSurface.coords = {'θ', 'φ'}
+TorusSurface.xmin = {-math.pi, -math.pi}
+TorusSurface.xmax = {math.pi, math.pi}
+TorusSurface.startCoord = {0, 0}
+function TorusSurface:createMetric()
 	local theta, phi = self.coordVars:unpack()
 	local r = 2
 	local R = 5
@@ -394,39 +395,39 @@ end
 -- 3D geometries
 
 
-local CylGeom = class(Geometry)
-CylGeom.coords = {'r', 'θ', 'z'}
-CylGeom.xmin = {1, 0, -5}
-CylGeom.xmax = {10, 2*math.pi, 5}
-CylGeom.startCoord = {1,math.pi,0}
-function CylGeom:createMetric()
+local Cylinder = class(Geometry)
+Cylinder.coords = {'r', 'θ', 'z'}
+Cylinder.xmin = {1, 0, -5}
+Cylinder.xmax = {10, 2*math.pi, 5}
+Cylinder.startCoord = {1,math.pi,0}
+function Cylinder:createMetric()
 	local r, theta, z = self.coordVars:unpack()
 	return symmath.Tensor('_ab', {1, 0, 0}, {0, r^2, 0}, {0, 0, 1})
 end
 
 
-local SphereGeom = class(Geometry)
+local Sphere = class(Geometry)
 local eps = .05	-- the holonomic connection gets singularities (cot theta = inf) at the boundaries
 				-- this could be avoided if the metric was evaluated at grid centers instead of vertices.
-SphereGeom.coords = {'r', 'θ', 'φ'}
-SphereGeom.xmin = {1, eps, -math.pi + eps}
-SphereGeom.xmax = {10, math.pi - eps, math.pi - eps}
-SphereGeom.startCoord = {1, math.pi/2, 0}
---SphereGeom.startCoord = {2, math.pi/2, 0}	-- squashed to an ellipsoid, just like the polar case
---SphereGeom.startCoord = {1, math.pi/2, math.pi-2*eps}	-- changing phi_0 doesn't affect it at all though
---SphereGeom.startCoord = {2, math.pi/2, math.pi-2*eps}	-- ... though it does a tiny bit (makes some waves in the coordinate system) if r_0 is not 1 
-function SphereGeom:createMetric()
+Sphere.coords = {'r', 'θ', 'φ'}
+Sphere.xmin = {1, eps, -math.pi + eps}
+Sphere.xmax = {10, math.pi - eps, math.pi - eps}
+Sphere.startCoord = {1, math.pi/2, 0}
+--Sphere.startCoord = {2, math.pi/2, 0}	-- squashed to an ellipsoid, just like the polar case
+--Sphere.startCoord = {1, math.pi/2, math.pi-2*eps}	-- changing phi_0 doesn't affect it at all though
+--Sphere.startCoord = {2, math.pi/2, math.pi-2*eps}	-- ... though it does a tiny bit (makes some waves in the coordinate system) if r_0 is not 1 
+function Sphere:createMetric()
 	local r, theta, phi = self.coordVars:unpack()
 	return symmath.Tensor('_ab', {1,0,0}, {0, r^2, 0}, {0, 0, r^2 * symmath.sin(theta)^2})
 end
 
 
-local TorusGeom = class(Geometry)
-TorusGeom.coords = {'r', 'θ', 'φ'}
-TorusGeom.xmin = {1, -math.pi, -math.pi}
-TorusGeom.xmax = {2, math.pi, math.pi}
-TorusGeom.startCoord = {1, -math.pi, -math.pi}
-function TorusGeom:createMetric()
+local Torus = class(Geometry)
+Torus.coords = {'r', 'θ', 'φ'}
+Torus.xmin = {1, -math.pi, -math.pi}
+Torus.xmax = {2, math.pi, math.pi}
+Torus.startCoord = {1, -math.pi, -math.pi}
+function Torus:createMetric()
 	local r, theta, phi = self.coordVars:unpack()
 	local R = 5
 	return symmath.Tensor('_ab', {1, 0, 0}, {0, r^2, 0}, {0, 0, (R + r * symmath.sin(theta))^2})	-- does sin(theta) work as well?
@@ -445,12 +446,12 @@ end
 
 
 -- here's a connection coefficient that gives rise to the stress-energy of a uniform electric field 
-local UniformElectricNum = class(Geometry)
-UniformElectricNum.coords = {'t', 'x', 'y'}		-- ut oh, now we introduce metric signatures ... 
-UniformElectricNum.xmin = {-1, -1, -1}
-UniformElectricNum.xmax = {1, 1, 1}
-UniformElectricNum.startCoord = {0, 0, 0}
-function UniformElectricNum:create_conns()
+local UniformElectricFieldNumeric = class(Geometry)
+UniformElectricFieldNumeric.coords = {'t', 'x', 'y'}		-- ut oh, now we introduce metric signatures ... 
+UniformElectricFieldNumeric.xmin = {-1, -1, -1}
+UniformElectricFieldNumeric.xmax = {1, 1, 1}
+UniformElectricFieldNumeric.startCoord = {0, 0, 0}
+function UniformElectricFieldNumeric:create_conns()
 	return self.app.size:lambda(function(...)
 		local E = 1
 		return matrix{
@@ -539,6 +540,40 @@ function App:initGL()
 	App.super.initGL(self)
 	gl.glEnable(gl.GL_DEPTH_TEST)
 
+	self.controlsOpened = ffi.new('bool[1]', true)
+	self.geomID = ffi.new('int[1]', 0)
+
+	self:buildSurface'Polar'
+end
+
+local geomClassesForName = table{
+	{Polar = Polar},
+	{PolarAnholonomic = PolarAnholonomic},
+	{SphereSurface = SphereSurface},
+	{TorusSurface = TorusSurface},
+	{PoincareDisk2D = PoincareDisk2D},
+	{Minkowski2D = Minkowski2D},
+	{Schwarzschild1Plus1 = Schwarzschild1Plus1},
+	{Schwarzschild1Plus1EOS = Schwarzschild1Plus1EOS},
+	{Cylinder = Cylinder},
+	{Sphere = Sphere},
+	{Torus = Torus},
+	{PoincareDisk3D = PoincareDisk3D},
+	{UniformElectricFieldNumeric = UniformElectricFieldNumeric},
+	{Schwarzschild2Plus1EOS = Schwarzschild2Plus1EOS},
+	{SchwarzschildSphere2Plus1EOS = SchwarzschildSphere2Plus1EOS},
+}
+local geomClassNames = geomClassesForName:map(function(kv) return (next(kv)) end)
+
+function App:buildSurface(geomName)
+	assert(geomName)	
+	local loc, geomClass = geomClassesForName:find(nil, function(kv)
+		return next(kv) == geomName
+	end)
+	assert(geomClass, "couldn't find geometry named "..geomName)
+	geomClass = assert(select(2, next(geomClass)))
+	self.geomID[0] = loc - 1
+
 	self.animShader = GLProgram{
 		vertexCode = [[
 varying vec4 color;
@@ -561,23 +596,17 @@ void main() {
 		uniforms = {t = 0},
 	}
 
-	-- 2D
-	--self.geom = PolarGeom(self)
-	--self.geom = PolarAnholonomicGeom(self)
-	--self.geom = SphereSurfaceGeom(self)	-- in absence of extrinsic curvature, this creates a polyconic projection
-	--self.geom = TorusSurfaceGeom(self)
-	--self.geom = PoincareDisk2D(self)
-	--self.geom = Minkowski2D(self)
-	--self.geom = Schwarzschild1Plus1(self)
-	--self.geom = Schwarzschild1Plus1EOS(self)
-	-- 3D
-	--self.geom = CylGeom(self)
-	--self.geom = SphereGeom(self)
-	--self.geom = TorusGeom(self)
-	--self.geom = PoincareDisk3D(self)
-	--self.geom = UniformElectricNum(self)
-	--self.geom = Schwarzschild2Plus1EOS(self)
-	self.geom = SchwarzschildSphere2Plus1EOS(self)
+	self.geom = geomClass(self)
+
+	self:rebuildSurface()
+end
+
+function App:rebuildSurface()
+
+	if self.list and self.list.id then
+		gl.glDeleteLists(self.list.id, 1)
+	end
+	self.list = {}
 
 	local n = #self.geom.coords
 	self.size = matrix{n}:lambda(I( ({[2]=64, [3]=16})[n] ))
@@ -993,7 +1022,6 @@ function App:update()
 
 	gl.glUniform1f(self.animShader.uniforms.t.loc, .5 - .5 * math.cos(math.pi * animTime[0]))
 
-	self.list = self.list or {}
 	glCall(self.list, function()
 		--gl.glColor3f(0,1,1)
 		gl.glBegin(gl.GL_LINES)
@@ -1059,22 +1087,45 @@ local function hoverTooltip(name)
 	end
 end
 
-local function sliderTooltip(name, ptr, vmin, vmax)
-	ig.igPushIdStr(name)
-	ig.igSliderFloat('', ptr, vmin, vmax)
-	hoverTooltip(name)
-	ig.igPopId()
+local function wrapTooltip(fn)
+	return function(name, ...)
+		ig.igPushIdStr(name)
+		local result = ig[fn]('', ...)
+		hoverTooltip(name)
+		ig.igPopId()
+		return result
+	end
 end
 
-local controlsOpened = ffi.new('bool[1]', true)
+local sliderTooltip = wrapTooltip'igSliderFloat'
+local comboTooltip = wrapTooltip'igCombo'
+local inputFloatTooltip = wrapTooltip'igInputFloat'
+
+local float = ffi.new('float[1]', 0)
 function App:updateGUI()
-	if ig.igBegin('Controls', controlsOpened) then
-		if ig.igButton(animating and 'Stop' or 'Start') then
+	if ig.igBegin('Controls', self.controlsOpened) then
+		if ig.igButton(animating and 'Stop Animation' or 'Start Animation') then
 			animating = not animating
 		end
 		
 		sliderTooltip('animation coefficient', animTime, -1, 1)
-		
+
+		if comboTooltip('coordinate system', self.geomID, geomClassNames) then
+			self:buildSurface(geomClassNames[self.geomID[0]+1])
+		end
+
+		local n = #self.size
+		for _,field in ipairs{'xmin', 'xmax', 'startCoord'} do
+			for j=1,n do
+				float[0] = self.geom[field][j]
+				if inputFloatTooltip(field..' '..j, float, 0, 0, -1, ig.ImGuiInputTextFlags_EnterReturnsTrue) then
+					self.geom[field][j] = float[0]
+					self:rebuildSurface()
+				end
+				if j < n then ig.igSameLine() end
+			end
+		end
+
 		ig.igEnd()
 	end
 end
