@@ -78,6 +78,8 @@ Next we can define a covariant derivative $\nabla_b T^a = {T^a}_{,b} + {\Gamma^a
 From this we see $\nabla_c e_b = {\Gamma^a}_{bc} e_a$<br>
 <br>
 
+<h3>Polar, Holonomic</h3>
+
 Take, for example, polar geometry.<br>
 <br>
 TODO what is less offensive to a mathematician?  Using row vectors and maintaining a left-multiplied linear system, or using column vectors and a right-multiplied linear system?<br>
@@ -180,9 +182,16 @@ I've tried <br>
 <li>explicitly solving linear dynamic systems (assuming the connection is constant), which I only have available for certain classifications of matrices.</li>
 </ul>
 I am testing it against known metrics.<br>
+<br>
+
+<h3>Polar, Holonomic</h3>
+
 Right now just the polar metric.<br>
 <br>
 
+My domain is $r \in [1, 10]$, $\theta \in [0, 2 \pi]$.<br>
+Notice that using this technique we can't approach $r = 0$, because ${\Gamma^a}_{bc}$ forms a singularity there.<br> 
+<br>
 
 If we apply this numerical technique starting at ${e_a}^I(x_0) = \delta_a^I$ and $x_0 = \pmatrix{ r_0 \\ \theta_0 } = \pmatrix{0\\1}$ we get things that work out:<br>
 <br>
@@ -197,11 +206,41 @@ If the initial coordinates are chosen to be $r_0 = 2$ then we get the following:
 <img src='polar-incorrect-r=.5.png'/><br>
 <br>
 
+<h3>Polar Anholonomic</h3>
+
+Intetersing thing about polar anholonomic.
+The singularities still exist.  ${\Gamma^\hat{\theta}}_{r\hat{\theta}} = -{\Gamma^r}_{\hat{\theta}\hat{\theta}} = \frac{1}{r}$.<br>
+Here's a picture starting at $r_0 = 1$, $\theta_0 = 0$:<Br>
+<img src='polar anholonomic - r=1, theta=0.png'/><br>
+But because the normalization causes the metric to be identity, we no longer have to worry about initialization of the $x_0$ with the initialation of ${e_a}^I(x_0)$.<br>
+Here's a picture starting at $r_0 = 2$, $\theta_0 = 0$:<Br>
+<img src='polar anholonomic - r=2, theta=0.png'/><br>
+Notice it looks exactly like the last picture, except shifted over a slight amount.  No distortions arise as do when initializing $r_0$ to different values in the holonomic coordinate system.<br>
+Also, because $e_\hat{\theta}$ is now normalized, I have to integrate further in the $\theta$ direction to cover the entire plane.<br>
+Here's what happens when my domain starts at $\theta=\pi$:<br>
+<img src='polar anholonomic - r=1, theta=pi.png'/><br>
+<br>
+
+<h3>Sphere Surface</h3>
 
 Same deal but for the equations of the surface of a sphere.<br>
-Notice because we are integrating along $e_\theta$ and $e_\phi$, and not $e_r$, there are no ${\Gamma^r}_{ab}$ connections (which are proportional to the extrinsic curvature by a function of the metric).<br>
-This means the surface solver can't rise off the plane, and we get solutions that look like this:<br>
+My domain is $\theta \in [0, \pi]$, $\phi \in [0, 2 \pi]$.  
+Just as the polar coordinate had a connection singularity, this has a singularity where ${\Gamma^\phi}_{\phi\theta} = cot\theta$ is undefined.<br>
 <br>
+
+Notice because we are integrating along $e_\theta$ and $e_\phi$, and not $e_r$, 
+there are no ${\Gamma^r}_{ab}$ connections (which are proportional to the 
+extrinsic curvature by a function of the metric).<br>
+This means the surface solver can't rise off the plane 
+and the sphere cannot be reformed.<br>
+<br>
+
+Also notice that the initial coordinates of $\phi_0$ seems to have no problems,
+since there are no singularities in connections associated with it.
+Therefore its initialization only seems to vary the influence of the coordinate domain,
+hence why the results of different initial $\phi_0$ look like different areas of the same overall coordinate map.<br>
+<br>
+
 For $\theta_0 = \frac{\pi}{2}, \phi_0 = \pi$ we find:<br>
 <img src='sphere surface - theta=.5 pi phi=pi.png'/><br>
 <br>

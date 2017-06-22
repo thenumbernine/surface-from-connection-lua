@@ -13,6 +13,9 @@ local ImGuiApp = require 'imguiapp'
 local View = require 'glapp.view'
 local Orbit = require 'glapp.orbit'
 local symmath = require 'symmath'
+local template = require 'template'
+local clnumber = require 'cl.obj.number'
+local CLEnv = require 'cl.obj.env'
 
 local function int_fe(r, q, dq_dr, dr)
 	return q + dq_dr(r, q) * dr, r + dr
@@ -445,36 +448,6 @@ function PoincareDisk3D:createMetric()
 end
 
 
--- here's a connection coefficient that gives rise to the stress-energy of a uniform electric field 
-local UniformElectricFieldNumeric = class(Geometry)
-UniformElectricFieldNumeric.coords = {'t', 'x', 'y'}		-- ut oh, now we introduce metric signatures ... 
-UniformElectricFieldNumeric.xmin = {-1, -1, -1}
-UniformElectricFieldNumeric.xmax = {1, 1, 1}
-UniformElectricFieldNumeric.startCoord = {0, 0, 0}
-function UniformElectricFieldNumeric:create_conns()
-	return self.app.size:lambda(function(...)
-		local E = 1
-		return matrix{
-			{
-				{0,E,0},
-				{E,0,0},
-				{0,0,0},
-			},
-			{
-				{-E,0,0},
-				{0,0,0},
-				{0,0,E},
-			},
-			{
-				{0,0,0},
-				{0,0,0},
-				{0,0,0},
-			},
-		}
-	end)
-end
-
-
 -- Schwarzschild in time and radial
 -- backwards from traditional order: r, t (so that time can point upwards)
 -- except for within and outside of the matter source
@@ -524,6 +497,83 @@ function SchwarzschildSphere2Plus1EOS:create_gs()
 end
 
 
+-- here's a connection coefficient that gives rise to the stress-energy of a uniform electric field 
+-- it's based on an analytical connection, but I haven't made a metric for it just yet
+local UniformElectricFieldNumeric = class(Geometry)
+UniformElectricFieldNumeric.coords = {'t', 'x', 'y', 'z'}		-- ut oh, now we introduce metric signatures ... 
+UniformElectricFieldNumeric.xmin = {-1, -1, -1}
+UniformElectricFieldNumeric.xmax = {1, 1, 1}
+UniformElectricFieldNumeric.startCoord = {0, 0, 0}
+function UniformElectricFieldNumeric:create_conns()
+	local E = 1
+	return self.app.size:lambda(function(...)
+		return matrix{
+			{
+				{0,E,0,0},
+				{E,0,0,0},
+				{0,0,0,0},
+				{0,0,0,0},
+			},
+			{
+				{-E,0,0,0},
+				{0,0,0,0},
+				{0,0,E,0},
+				{0,0,0,E},
+			},
+			{
+				{0,0,0,0},
+				{0,0,0,0},
+				{0,0,0,0},
+				{0,0,0,0},
+			},
+		}
+	end)
+end
+
+-- Here's connections that give rise to the stress-energy for the magnetic field
+--  around an infinite wire with no net charge.
+-- Still no analytical metric for this either.
+-- I got it from my file at "symmath/tests/electrovacuum/infinite wire no charge.lua"
+-- notice it is 4D, so I need to start thinking of how to handle that.
+local InfiniteWireMagneticFieldNumeric = class(Geometry)
+InfiniteWireMagneticFieldNumeric.coords = {'t', 'r', 'φ', 'z'}
+InfiniteWireMagneticFieldNumeric.xmin = {-1, -1, -math.pi, -1}
+InfiniteWireMagneticFieldNumeric.xmax = {1, 1, math.pi, 1}
+InfiniteWireMagneticFieldNumeric.startCoord = {0, 0, 0, 0}
+function InfiniteWireMagneticFieldNumeric:create_conns()
+	local I = 1
+	return self.app.size:lambda(function(...)
+		local t, r, phi, z = self.app.xs[{...}]:unpack()
+		return matrix{
+			{
+				{0,0,2*I,0},
+				{0,0,0,0},
+				{2*I,0,0,0},
+				{0,0,0,0},
+			},
+			{
+				{0,0,0,0},
+				{0,0,0,0},
+				{0,0,0,0},
+				{0,0,0,0},
+			},
+			{
+				{2*I/r^2,0,0,0},
+				{0,2*I/r^2,0,0},
+				{0,0,0,0},
+				{0,0,0,2*I/r^2},
+			},
+			{
+				{0,0,0,0},
+				{0,0,0,0},
+				{0,0,0,0},
+				{0,0,0,0},
+			},
+		}
+	end)
+end
+
+
 local function I(x)
 	return function()
 		return x
@@ -547,6 +597,7 @@ function App:initGL()
 end
 
 local geomClassesForName = table{
+	-- 2D
 	{Polar = Polar},
 	{PolarAnholonomic = PolarAnholonomic},
 	{SphereSurface = SphereSurface},
@@ -555,6 +606,7 @@ local geomClassesForName = table{
 	{Minkowski2D = Minkowski2D},
 	{Schwarzschild1Plus1 = Schwarzschild1Plus1},
 	{Schwarzschild1Plus1EOS = Schwarzschild1Plus1EOS},
+	-- 3D
 	{Cylinder = Cylinder},
 	{Sphere = Sphere},
 	{Torus = Torus},
@@ -562,6 +614,8 @@ local geomClassesForName = table{
 	{UniformElectricFieldNumeric = UniformElectricFieldNumeric},
 	{Schwarzschild2Plus1EOS = Schwarzschild2Plus1EOS},
 	{SchwarzschildSphere2Plus1EOS = SchwarzschildSphere2Plus1EOS},
+	-- 4D
+	{InfiniteWireMagneticFieldNumeric = InfiniteWireMagneticFieldNumeric},
 }
 local geomClassNames = geomClassesForName:map(function(kv) return (next(kv)) end)
 
@@ -573,6 +627,8 @@ function App:buildSurface(geomName)
 	assert(geomClass, "couldn't find geometry named "..geomName)
 	geomClass = assert(select(2, next(geomClass)))
 	self.geomID[0] = loc - 1
+
+	self.env = CLEnv()
 
 	self.animShader = GLProgram{
 		vertexCode = [[
@@ -598,26 +654,27 @@ void main() {
 
 	self.geom = geomClass(self)
 
-	self:rebuildSurface()
-end
 
-function App:rebuildSurface()
-
-	if self.list and self.list.id then
-		gl.glDeleteLists(self.list.id, 1)
-	end
-	self.list = {}
 
 	local n = #self.geom.coords
-	self.size = matrix{n}:lambda(I( ({[2]=64, [3]=16})[n] ))
+	self.size = matrix{n}:lambda(I( ({[2]=64, [3]=16, [4]=8})[n] ))
+
+	self.domain = self.env:domain{size=self.size}
 
 	self.xmin = self.geom and self.geom.xmin or matrix{n}:lambda(I(-1))
 	self.xmax = self.geom and self.geom.xmax or matrix{n}:lambda(I(1))
 	
-	local n = #self.size
-	
 	self.view.ortho = n == 2
-	
+
+--[=[ opencl code
+	-- regenerate these to prevent ffi cdef redefs	
+	self.rank1Type = 'rank1_t'
+	self.rank2Type = 'rank2_t'
+	local rank1TypeCode = 'typedef real '..self.rank1Type..'['..n..'];'
+	local rank2TypeCode = 'typedef real '..self.rank2Type..'['..n..'];'
+	ffi.cdef(rank1TypeCode)
+--]=]
+
 	--[[ cell centered, including borders
 	self.dx = matrix{n}:ones():emul(self.xmax - self.xmin):ediv(self.size)
 	self.xs = self.size:lambda(function(...) return (matrix{...} - .5):emul(self.dx) + self.xmin end)
@@ -625,7 +682,60 @@ function App:rebuildSurface()
 	-- [[ vertex centered, excluding borders, so position 2,2 is at xmin (useful for centering the corner vertex)
 	self.dx = matrix{n}:ones():emul(self.xmax - self.xmin):ediv(self.size-3)
 	self.xs = self.size:lambda(function(...) return (matrix{...} - 2):emul(self.dx) + self.xmin end)
+
+--[=[ opencl code
+	self.headerCode = table{
+		rank1TypeCode,
+		template([[
+<? for j=0,n-1 do ?>
+#define size_<?=j?> <?=size[j+1]?>
+#define xmin_<?=j?> <?=clnumber(xmin[j+1])?>
+#define xmax_<?=j?> <?=clnumber(xmax[j+1])?>
+#define dx_<?=j?> ((xmax_<?=j?> - xmin_<?=j?>) / (real)(size_<?=j?> - 3))
+<? end ?>
+]], 	{
+			n = n,
+			clnumber = clnumber,
+			size = self.size,
+			xmin = self.geom.xmin,
+			xmax = self.geom.xmax,
+		}),
+	}:concat'\n'
+
+
+	self.xsBuf = self.domain:buffer{name='xs', type=self.rank1Type}
+	self.domain:kernel{
+		header = self.headerCode,
+		argsOut = {self.xsBuf},
+		body = template([[
+<? for j=0,n-1 do 
+?>	xs[index][<?=j?>] = (i.s<?=j?> - 2) * dx_<?=j?> + xmin_<?=j?>;
+<? end 
+?>]], {n = n}),
+	}()
+--]=]	
 	--]]
+
+--[=[ opencl
+	if self.geom.createMetric 
+	or self.geom.create_gs
+	then
+		self.gsBuf = self.domain:buffer{name='gs', type=self.rank2Type}
+		self.gUsBuf = self.domain:buffer{name='gUs', type=self.rank2Type}
+	end
+--]=]
+
+	self:rebuildSurface()
+end
+
+function App:rebuildSurface()
+
+	local n = #self.size
+
+	if self.list and self.list.id then
+		gl.glDeleteLists(self.list.id, 1)
+	end
+	self.list = {}
 
 	-- if we are calculating the connection from discrete derivatives of the metric ...
 	if self.geom.createMetric 
@@ -696,6 +806,10 @@ function App:rebuildSurface()
 
 	local xInit = matrix(assert(self.geom.startCoord))
 	local i = ((xInit - self.geom.xmin):ediv(self.geom.xmax - self.geom.xmin):emul(self.size-3) + 2.5):map(math.floor)
+	for j=1,n do
+		i[j] = math.clamp(i[j], 2, self.size[j]-1)
+		-- TODO reset the start coord in the GUI if it has to be clamped
+	end
 	self.es[i] = matrix{n,n}:ident()
 	local function withinEdge(index,size)
 		for i=1,n do
@@ -984,6 +1098,8 @@ local function glColor(m)
 		gl.glColor3d(m[1], m[2], .5)
 	elseif #m == 3 then
 		gl.glColor3d(m:unpack())
+	elseif #m == 4 then
+		gl.glColor3d(table.unpack(m,1,3))
 	else
 		error"can't color this many dimensions"
 	end
@@ -993,6 +1109,7 @@ local function glTexCoord(m)
 	assert(({
 		[2] = gl.glTexCoord2d,
 		[3] = gl.glTexCoord3d,
+		[4] = gl.glTexCoord4d,
 	})[#m])(m:unpack())
 end
 
@@ -1000,6 +1117,7 @@ local function glVertex(m)
 	assert(({
 		[2] = gl.glVertex2d,
 		[3] = gl.glVertex3d,
+		[4] = gl.glVertex4d,
 	})[#m])(m:unpack())
 end
 
@@ -1125,9 +1243,8 @@ function App:updateGUI()
 				if j < n then ig.igSameLine() end
 			end
 		end
-
-		ig.igEnd()
 	end
+	ig.igEnd()
 end
 
 App():run()
