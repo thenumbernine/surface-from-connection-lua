@@ -297,6 +297,10 @@ function PolarAnholonomic:create_conns()
 		return matrix{ {{0,0},{0,-1/r}}, {{0,1/r},{0,0}} }
 	end)
 end
+-- if you can get the lengths holonomic basis' vectors then reconstructing the original shape is much easier 
+function PolarAnholonomic:get_basis_lengths(r, theta)
+	return matrix{1, r}
+end
 
 
 -- cyl surface can't be reconstructed
@@ -839,9 +843,17 @@ print'building surface...'
 				and not sofar[tostring(nextIndex)]
 				then
 					local nextConnK = self.conns[nextIndex](_,_,k)
-				
+			
+					-- cheating to get around anholonomic coordinate systems
+					-- technically I should be using commutation coefficients or something
+					local len = 1
+					if self.geom.get_basis_lengths then
+						local lens = self.geom:get_basis_lengths(self.xs[index]:unpack())
+						len = len * lens[k]
+					end
+		
 					-- derivative along coordinate
-					local ds = dir * self.dx[k]
+					local ds = dir * self.dx[k] * len
 				
 					local eOrig = self.es[index]
 					local XOrig = self.Xs[index]
