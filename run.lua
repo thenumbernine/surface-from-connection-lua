@@ -311,7 +311,7 @@ end
 -- like cyl surface, it needs extrinsic curvature information to be properly rebuilt 
 local SphereSurface = class(Geometry)
 local eps = .01
-SphereSurface.coords = {'θ', 'phi'}
+SphereSurface.coords = {'θ', 'φ'}
 SphereSurface.xmin = matrix{eps, eps}
 SphereSurface.xmax = matrix{math.pi-eps, 2*math.pi-eps}
 
@@ -395,6 +395,21 @@ function Schwarzschild1Plus1EOS:create_gs()
 			{1/(1 - 2 * massWithinRadius / r), 0},
 			{0, 1 - 2 * massWithinRadius / r},
 		}
+	end)
+end
+
+-- here's one from Ch.3 of the "Covariant Loop Quantum Gravity" book
+local LagrangianTotalEnergy = class(Geometry)
+LagrangianTotalEnergy.coords = {'a', 'b'}
+LagrangianTotalEnergy.xmin = {-2, -2}
+LagrangianTotalEnergy.xmax = {2, 2}
+LagrangianTotalEnergy.startCoord = {0, 0}
+function LagrangianTotalEnergy:create_gs()
+	return self.app.size:lambda(function(...)
+		local a, b = self.app.xs[{...}]:unpack()
+		local E = 10
+		local r = 2 * E - a^2 - b^2
+		return matrix{{r, 0}, {0, r}}
 	end)
 end
 
@@ -610,6 +625,7 @@ local geomClassesForName = table{
 	{Minkowski2D = Minkowski2D},
 	{Schwarzschild1Plus1 = Schwarzschild1Plus1},
 	{Schwarzschild1Plus1EOS = Schwarzschild1Plus1EOS},
+	{LagrangianTotalEnergy = LagrangianTotalEnergy},
 	-- 3D
 	{Cylinder = Cylinder},
 	{Sphere = Sphere},
