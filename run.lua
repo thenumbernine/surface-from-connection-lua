@@ -398,7 +398,7 @@ function Schwarzschild1Plus1EOS:create_gs()
 	end)
 end
 
--- here's one from Ch.3 of the "Covariant Loop Quantum Gravity" book
+-- here's one from section 2.5 of the "Covariant Loop Quantum Gravity" book
 local LagrangianTotalEnergy = class(Geometry)
 LagrangianTotalEnergy.coords = {'a', 'b'}
 LagrangianTotalEnergy.xmin = {-2, -2}
