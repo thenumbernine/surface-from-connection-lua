@@ -516,6 +516,38 @@ function SchwarzschildSphere2Plus1EOS:create_gs()
 end
 
 
+
+-- here's a connection coefficient that gives rise to the stress-energy of a uniform electric field 
+-- it's based on an analytical connection, but I haven't made a metric for it just yet
+local UniformElectricFieldNumericIn2Plus1D = class(Geometry)
+UniformElectricFieldNumericIn2Plus1D.coords = {'t', 'x', 'y'}		-- ut oh, now we introduce metric signatures ... 
+UniformElectricFieldNumericIn2Plus1D.xmin = {-1, -1, -1}
+UniformElectricFieldNumericIn2Plus1D.xmax = {1, 1, 1}
+UniformElectricFieldNumericIn2Plus1D.startCoord = {0, 0, 0}
+function UniformElectricFieldNumericIn2Plus1D:create_conns()
+	local E = 1
+	return self.app.size:lambda(function(...)
+		return matrix{
+			{
+				{0,E,0},
+				{E,0,0},
+				{0,0,0},
+			},
+			{
+				{-E,0,0},
+				{0,0,0},
+				{0,0,E},
+			},
+			{
+				{0,0,0},
+				{0,0,0},
+				{0,0,0},
+			},
+		}
+	end)
+end
+
+
 -- here's a connection coefficient that gives rise to the stress-energy of a uniform electric field 
 -- it's based on an analytical connection, but I haven't made a metric for it just yet
 local UniformElectricFieldNumeric = class(Geometry)
@@ -631,10 +663,11 @@ local geomClassesForName = table{
 	{Sphere = Sphere},
 	{Torus = Torus},
 	{PoincareDisk3D = PoincareDisk3D},
-	{UniformElectricFieldNumeric = UniformElectricFieldNumeric},
+	{UniformElectricFieldNumericIn2Plus1D = UniformElectricFieldNumericIn2Plus1D },
 	{Schwarzschild2Plus1EOS = Schwarzschild2Plus1EOS},
 	{SchwarzschildSphere2Plus1EOS = SchwarzschildSphere2Plus1EOS},
 	-- 4D
+	{UniformElectricFieldNumeric = UniformElectricFieldNumeric},
 	{InfiniteWireMagneticFieldNumeric = InfiniteWireMagneticFieldNumeric},
 }
 local geomClassNames = geomClassesForName:map(function(kv) return (next(kv)) end)
