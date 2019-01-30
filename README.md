@@ -1,1 +1,1 @@
-View the README in [html](https://htmlpreview.github.io/?https://github.com/thenumbernine/surface-from-connection-lua/blob/master/docs/README.html)
+View the README in [html](https://thenumbernine.github.io/surface%2dfrom%2dconnection%2dlua/docs/README.html)
