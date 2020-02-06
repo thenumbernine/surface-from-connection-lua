@@ -9,9 +9,6 @@ local GLProgram = require 'gl.program'
 local matrix = require 'matrix'
 local complex = require 'symmath.complex'
 local gnuplot = require 'gnuplot'
-local ImGuiApp = require 'imguiapp'
-local View = require 'glapp.view'
-local Orbit = require 'glapp.orbit'
 local symmath = require 'symmath'
 local template = require 'template'
 local clnumber = require 'cl.obj.number'
@@ -189,7 +186,7 @@ function Geometry:testExact()
 end
 
 function Geometry:compileTensor(expr)
-	local size = table.map(expr:dim(), function(i) return i.value end)
+	local size = expr:dim()
 	local fs = matrix(size):lambda(function(...)
 		return expr[{...}]:compile(self.coordVars)
 	end)
@@ -632,7 +629,7 @@ local function I(x)
 end
 
 
-local App = class(Orbit(View.apply(ImGuiApp)))
+local App = class(require 'glapp.orbit'(require 'imguiapp'))
 
 App.title = 'reconstruct surface from geodesics' 
 App.viewDist = 10
@@ -1117,10 +1114,10 @@ end
 
 function App:drawGrid()
 	local xmin, xmax, ymin, ymax = self.view:getBounds(self.width / self.height)
-	xmin = xmin + self.view.pos[1]
-	ymin = ymin + self.view.pos[2]
-	xmax = xmax + self.view.pos[1]
-	ymax = ymax + self.view.pos[2]
+	xmin = xmin + self.view.pos.x
+	ymin = ymin + self.view.pos.y
+	xmax = xmax + self.view.pos.x
+	ymax = ymax + self.view.pos.y
 	
 	gl.glColor3f(.1, .1, .1)
 	local xrange = xmax - xmin
@@ -1259,7 +1256,7 @@ function App:update()
 end
 
 local function hoverTooltip(name)
-	if ig.igIsItemHovered() then
+	if ig.igIsItemHovered(0) then
 		ig.igBeginTooltip()
 		ig.igText(name)
 		ig.igEndTooltip()
@@ -1268,10 +1265,10 @@ end
 
 local function wrapTooltip(fn)
 	return function(name, ...)
-		ig.igPushIdStr(name)
+		ig.igPushIDStr(name)
 		local result = ig[fn]('', ...)
 		hoverTooltip(name)
-		ig.igPopId()
+		ig.igPopID()
 		return result
 	end
 end
@@ -1297,7 +1294,7 @@ function App:updateGUI()
 		for _,field in ipairs{'xmin', 'xmax', 'startCoord'} do
 			for j=1,n do
 				float[0] = self.geom[field][j]
-				if inputFloatTooltip(field..' '..j, float, 0, 0, -1, ig.ImGuiInputTextFlags_EnterReturnsTrue) then
+				if inputFloatTooltip(field..' '..j, float, .01, .1, '%f', ig.ImGuiInputTextFlags_EnterReturnsTrue) then
 					self.geom[field][j] = float[0]
 					self:rebuildSurface()
 				end
