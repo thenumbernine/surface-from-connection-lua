@@ -78,6 +78,11 @@ Next we can define a covariant derivative $\nabla_b T^a = {T^a}_{,b} + {\Gamma^a
 From this we see $\nabla_c e_b = {\Gamma^a}_{bc} e_a$<br>
 <br>
 
+For a better description of all of this, look at my Differential Geometry worksheets online here: <a href="http://thenumbernine.github.io/">http://thenumbernine.github.io/</a>
+You will notice that the convention of 2nd and 3rd indexes of the connections are reversed between this worksheet and that one (as most sources don't agree on an ordering of them, since in the Levi-Civita connection case they are symmetric).
+You'll also find a lot more on the theory explained.<br>
+<br>
+
 <h3>Polar, Holonomic</h3>
 
 Take, for example, polar geometry.<br>
@@ -129,7 +134,7 @@ $\frac{\partial}{\partial \theta} \pmatrix{ {e_r}^x & {e_r}^y \\ {e_\theta}^x & 
 = \pmatrix{ 0 & \frac{1}{r} \\ -r & 0} \pmatrix{ {e_r}^x & {e_r}^y \\ {e_\theta}^x & {e_\theta}^y }$<br>
 This looks like a linear dynamic system.<br>
 Eigen decomposition of the matrix form of ${\Gamma^a}_{b\theta}$ gives us:<br>
-$\pmatrix{ 0 & \frac{1}{r} \\ -r & 0} = \pmatrix{ 1 & 1 \\ -i r && i r} \pmatrix{-i & 0 \\ 0 & i} \pmatrix{\frac{1}{2} & \frac{i}{2 r} \\ \frac{1}{2} & -\frac{i}{2r} }$<br>
+$\pmatrix{ 0 & \frac{1}{r} \\ -r & 0} = \pmatrix{ 1 & 1 \\ -i r & i r} \pmatrix{-i & 0 \\ 0 & i} \pmatrix{\frac{1}{2} & \frac{i}{2 r} \\ \frac{1}{2} & -\frac{i}{2r} }$<br>
 Therefore the matrix exponent can be calculated as<br>
 $exp( \theta \cdot \left[ {\Gamma^a}_{b\theta} \right] ) 
 = \pmatrix{ 1 & 1 \\ -i r && i r} \pmatrix{exp(-i \theta) & 0 \\ 0 & exp(i \theta)} \pmatrix{\frac{1}{2} & \frac{i}{2 r} \\ \frac{1}{2} & -\frac{i}{2r} }
