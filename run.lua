@@ -149,7 +149,7 @@ function Geometry:init(app)
 	end)
 
 	if self.createMetric then
-		symmath.Tensor.coords{{variables=self.coordVars}}
+		local chart = symmath.Tensor.Chart{coords=self.coordVars}
 		local n = #self.coords
 		local g = self:createMetric()
 		local gU = symmath.Tensor('^ab', table.unpack( (symmath.Matrix.inverse(g)) ))
@@ -678,7 +678,9 @@ function App:buildSurface(geomName)
 	geomClass = assert(select(2, next(geomClass)))
 	self.geomID[0] = loc - 1
 
+--[[
 	self.env = CLEnv()
+--]]
 
 	self.animShader = GLProgram{
 		vertexCode = [[
@@ -709,7 +711,9 @@ void main() {
 	local n = #self.geom.coords
 	self.size = matrix{n}:lambda(I( ({[2]=64, [3]=16, [4]=8})[n] ))
 
+--[[
 	self.domain = self.env:domain{size=self.size}
+--]]
 
 	self.xmin = self.geom and self.geom.xmin or matrix{n}:lambda(I(-1))
 	self.xmax = self.geom and self.geom.xmax or matrix{n}:lambda(I(1))
