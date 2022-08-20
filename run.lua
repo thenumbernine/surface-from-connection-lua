@@ -1269,7 +1269,7 @@ end
 
 local function wrapTooltip(fn)
 	return function(name, ...)
-		ig.igPushIDStr(name)
+		ig.igPushID_Str(name)
 		local result = ig[fn]('', ...)
 		hoverTooltip(name)
 		ig.igPopID()
