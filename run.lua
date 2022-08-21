@@ -1,7 +1,6 @@
 #! /usr/bin/env luajit
 require 'ext'
 local bit = require 'bit'
-local ffi = require 'ffi'
 local ig = require 'imgui'
 local gl = require 'gl'
 local glCall = require 'gl.call'
@@ -726,6 +725,7 @@ void main() {
 	self.rank2Type = 'rank2_t'
 	local rank1TypeCode = 'typedef real '..self.rank1Type..'['..n..'];'
 	local rank2TypeCode = 'typedef real '..self.rank2Type..'['..n..'];'
+	local ffi = require 'ffi'
 	ffi.cdef(rank1TypeCode)
 --]=]
 
