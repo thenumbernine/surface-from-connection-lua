@@ -2,7 +2,7 @@
 require 'ext'
 local bit = require 'bit'
 local ffi = require 'ffi'
-local ig = require 'ffi.imgui'
+local ig = require 'imgui'
 local gl = require 'gl'
 local glCall = require 'gl.call'
 local GLProgram = require 'gl.program'
