@@ -638,8 +638,8 @@ function App:initGL()
 	App.super.initGL(self)
 	gl.glEnable(gl.GL_DEPTH_TEST)
 
-	self.controlsOpened = ffi.new('bool[1]', true)
-	self.geomID = ffi.new('int[1]', 0)
+	self.controlsOpened = true
+	self.geomID = 1
 
 	self:buildSurface'Polar'
 end
@@ -676,7 +676,7 @@ function App:buildSurface(geomName)
 	end)
 	assert(geomClass, "couldn't find geometry named "..geomName)
 	geomClass = assert(select(2, next(geomClass)))
-	self.geomID[0] = loc - 1
+	self.geomID = loc
 
 --[[
 	self.env = CLEnv()
@@ -1184,8 +1184,10 @@ local function glVertex(m)
 end
 
 local animating = false
-local animTime = ffi.new('float[1]', 0)
 local lastTime = 0
+local gui = {
+	animTime = 0,
+}
 function App:update()
 	gl.glClear(bit.bor(gl.GL_COLOR_BUFFER_BIT, gl.GL_DEPTH_BUFFER_BIT))
 
@@ -1194,13 +1196,13 @@ function App:update()
 	local thisTime = os.clock()	
 	if animating then
 		local deltaTime = (thisTime - lastTime) / math.pi
-		animTime[0] = (((animTime[0] + deltaTime) + 1) % 2) - 1
+		gui.animTime = (((gui.animTime + deltaTime) + 1) % 2) - 1
 	end
 	lastTime = thisTime
 	
 	self.animShader:use()
 
-	gl.glUniform1f(self.animShader.uniforms.t.loc, .5 - .5 * math.cos(math.pi * animTime[0]))
+	gl.glUniform1f(self.animShader.uniforms.t.loc, .5 - .5 * math.cos(math.pi * gui.animTime))
 
 	glCall(self.list, function()
 		--gl.glColor3f(0,1,1)
@@ -1259,47 +1261,22 @@ function App:update()
 	App.super.update(self)
 end
 
-local function hoverTooltip(name)
-	if ig.igIsItemHovered(0) then
-		ig.igBeginTooltip()
-		ig.igText(name)
-		ig.igEndTooltip()
-	end
-end
-
-local function wrapTooltip(fn)
-	return function(name, ...)
-		ig.igPushID_Str(name)
-		local result = ig[fn]('', ...)
-		hoverTooltip(name)
-		ig.igPopID()
-		return result
-	end
-end
-
-local sliderTooltip = wrapTooltip'igSliderFloat'
-local comboTooltip = wrapTooltip'igCombo'
-local inputFloatTooltip = wrapTooltip'igInputFloat'
-
-local float = ffi.new('float[1]', 0)
 function App:updateGUI()
-	if ig.igBegin('Controls', self.controlsOpened) then
+	if ig.luatableBegin('Controls', self, 'controlsOpened') then
 		if ig.igButton(animating and 'Stop Animation' or 'Start Animation') then
 			animating = not animating
 		end
 		
-		sliderTooltip('animation coefficient', animTime, -1, 1)
+		ig.luatableTooltipSliderFloat('animation coefficient', gui, 'animTime', -1, 1)
 
-		if comboTooltip('coordinate system', self.geomID, geomClassNames) then
-			self:buildSurface(geomClassNames[self.geomID[0]+1])
+		if ig.luatableTooltipCombo('coordinate system', self, 'geomID', geomClassNames) then
+			self:buildSurface(geomClassNames[self.geomID])
 		end
 
 		local n = #self.size
 		for _,field in ipairs{'xmin', 'xmax', 'startCoord'} do
 			for j=1,n do
-				float[0] = self.geom[field][j]
-				if inputFloatTooltip(field..' '..j, float, .01, .1, '%f', ig.ImGuiInputTextFlags_EnterReturnsTrue) then
-					self.geom[field][j] = float[0]
+				if ig.luatableTooltipInputFloat(field..' '..j, self.geom[field], j, .01, .1, '%f', ig.ImGuiInputTextFlags_EnterReturnsTrue) then
 					self:rebuildSurface()
 				end
 				if j < n then ig.igSameLine() end
