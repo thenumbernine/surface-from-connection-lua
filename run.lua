@@ -11,7 +11,10 @@ local gnuplot = require 'gnuplot'
 local symmath = require 'symmath'
 local template = require 'template'
 local clnumber = require 'cl.obj.number'
+
+--[[
 local CLEnv = require 'cl.obj.env'
+--]]
 
 local function int_fe(r, q, dq_dr, dr)
 	return q + dq_dr(r, q) * dr, r + dr
