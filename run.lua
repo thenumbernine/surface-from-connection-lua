@@ -631,7 +631,7 @@ local function I(x)
 end
 
 
-local App = class(require 'glapp.orbit'(require 'imguiapp'))
+local App = require 'imguiapp.withorbit'()
 
 App.title = 'reconstruct surface from geodesics' 
 App.viewDist = 10
