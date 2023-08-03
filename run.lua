@@ -6,7 +6,7 @@ local gl = require 'gl'
 local glCall = require 'gl.call'
 local GLProgram = require 'gl.program'
 local matrix = require 'matrix'
-local complex = require 'symmath.complex'
+local complex = require 'complex'
 local gnuplot = require 'gnuplot'
 local symmath = require 'symmath'
 local template = require 'template'
@@ -704,7 +704,7 @@ void main() {
 }
 ]],
 		uniforms = {t = 0},
-	}
+	}:useNone()
 
 	self.geom = geomClass(self)
 
