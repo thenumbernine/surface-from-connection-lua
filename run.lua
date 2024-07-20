@@ -3,14 +3,15 @@ require 'ext'
 local bit = require 'bit'
 local ig = require 'imgui'
 local gl = require 'gl'
-local glCall = require 'gl.call'
 local GLProgram = require 'gl.program'
 local matrix = require 'matrix'
 local complex = require 'complex'
-local gnuplot = require 'gnuplot'
 local symmath = require 'symmath'
 local template = require 'template'
 local clnumber = require 'cl.obj.number'
+local ffi = require 'ffi'
+local vec3f_t = require 'vec-ffi.vec3f'
+local GLSceneObject = require 'gl.sceneobject'
 
 --[[
 local CLEnv = require 'cl.obj.env'
@@ -48,13 +49,13 @@ local function permutations(args)
 		subindex:insert(subset:remove(i))
 		parity = parity * -1		-- TODO times -1 or times the distance of the swap?
 		if permutations{
-			elements = subset, 
-			callback = callback, 
+			elements = subset,
+			callback = callback,
 			index = subindex,
 			size = args.size,
 			parity = parity,
-		} then 
-			return true 
+		} then
+			return true
 		end
 	end
 end
@@ -112,13 +113,13 @@ function matrix:inv()
 	if n == 2 then
 		local a,b = self[1]:unpack()
 		local c,d = self[2]:unpack()
-		local det = a * d - b * c 
+		local det = a * d - b * c
 		return matrix{
 			{d, -b},
 			{-c, a}
 		} / det
 	elseif n == 3 then
-		-- transpose, +-+- sign stagger, for each element remove that row and column and 
+		-- transpose, +-+- sign stagger, for each element remove that row and column and
 		return matrix{
 			{self[2][2]*self[3][3]-self[2][3]*self[3][2], self[1][3]*self[3][2]-self[1][2]*self[3][3], self[1][2]*self[2][3]-self[1][3]*self[2][2]},
 			{self[2][3]*self[3][1]-self[2][1]*self[3][3], self[1][1]*self[3][3]-self[1][3]*self[3][1], self[1][3]*self[2][1]-self[1][1]*self[2][3]},
@@ -157,7 +158,7 @@ function Geometry:init(app)
 		local gU = symmath.Tensor('^ab', table.unpack( (symmath.Matrix.inverse(g)) ))
 		local dg = symmath.Tensor('_abc', table.unpack(g'_ab,c'()))
 		local ConnL = symmath.Tensor('_abc', table.unpack( ((dg'_abc' + dg'_acb' - dg'_bca')/2)() ))
-		local Conn = symmath.Tensor('^a_bc', table.unpack( (gU'^ad' * ConnL'_dbc')() ))	
+		local Conn = symmath.Tensor('^a_bc', table.unpack( (gU'^ad' * ConnL'_dbc')() ))
 		self.calc = {
 			g = self:compileTensor(g),
 			Conn = self:compileTensor(Conn),
@@ -175,6 +176,7 @@ function Geometry:testExact()
 	local x = matrix{app.size[1]-2}:lambda(function(i) return app.xs[i+1][1][1] end)
 	local y = matrix{app.size[2]-2}:lambda(function(j) return app.xs[1][j+1][2] end)
 	local z = (app.size-2):lambda(function(i,j) return connNumConnDiff[i+1][j+1] end)
+	local gnuplot = require 'gnuplot'
 	gnuplot{
 		output = 'conn numeric vs analytic.png',
 		style = 'data lines',
@@ -222,7 +224,7 @@ what each geometry subclass needs:
 * xmin, xmax
 * startCoord (where to start the surface generation at.  this is very important.
 * one of the two:
-	* createMetric, if the geometry is to use an analytical metric 
+	* createMetric, if the geometry is to use an analytical metric
 	* create_conns.  otherwise these return identity g_ab's and zero Conn^a_bc's.
 --]]
 
@@ -251,7 +253,7 @@ Polar.startCoord = {2,0}
 Polar.xmin = matrix{.1, 0}
 Polar.xmax = matrix{2, 2 * math.pi}
 Polar.startCoord = {.5,0}
---]] 
+--]]
 -- [[ analytically
 function Polar:createMetric()
 	local r, theta = self.coordVars:unpack()
@@ -296,7 +298,7 @@ function PolarAnholonomic:create_conns()
 		return matrix{ {{0,0},{0,-1/r}}, {{0,1/r},{0,0}} }
 	end)
 end
--- if you can get the lengths holonomic basis' vectors then reconstructing the original shape is much easier 
+-- if you can get the lengths holonomic basis' vectors then reconstructing the original shape is much easier
 function PolarAnholonomic:get_basis_lengths(r, theta)
 	return matrix{1, r}
 end
@@ -307,7 +309,7 @@ end
 -- it has a connection of zero
 
 -- sphere surface likewise is a 2 dimensional system inside 3 dimensions
--- like cyl surface, it needs extrinsic curvature information to be properly rebuilt 
+-- like cyl surface, it needs extrinsic curvature information to be properly rebuilt
 local SphereSurface = class(Geometry)
 local eps = .01
 SphereSurface.coords = {'θ', 'φ'}
@@ -360,7 +362,7 @@ function Minkowski2D:createMetric()
 end
 
 
--- here's Schwarzschild in time and in radial 
+-- here's Schwarzschild in time and in radial
 -- it is treating Rs as constant, which means this metric is true for the spacetime *outside* of the massive body
 local Schwarzschild1Plus1 = class(Geometry)
 Schwarzschild1Plus1.coords = {'r', 't'}
@@ -436,7 +438,7 @@ Sphere.xmax = {10, math.pi - eps, math.pi - eps}
 Sphere.startCoord = {1, math.pi/2, 0}
 --Sphere.startCoord = {2, math.pi/2, 0}	-- squashed to an ellipsoid, just like the polar case
 --Sphere.startCoord = {1, math.pi/2, math.pi-2*eps}	-- changing phi_0 doesn't affect it at all though
---Sphere.startCoord = {2, math.pi/2, math.pi-2*eps}	-- ... though it does a tiny bit (makes some waves in the coordinate system) if r_0 is not 1 
+--Sphere.startCoord = {2, math.pi/2, math.pi-2*eps}	-- ... though it does a tiny bit (makes some waves in the coordinate system) if r_0 is not 1
 function Sphere:createMetric()
 	local r, theta, phi = self.coordVars:unpack()
 	return symmath.Tensor('_ab', {1,0,0}, {0, r^2, 0}, {0, 0, r^2 * symmath.sin(theta)^2})
@@ -516,10 +518,10 @@ end
 
 
 
--- here's a connection coefficient that gives rise to the stress-energy of a uniform electric field 
+-- here's a connection coefficient that gives rise to the stress-energy of a uniform electric field
 -- it's based on an analytical connection, but I haven't made a metric for it just yet
 local UniformElectricFieldNumericIn2Plus1D = class(Geometry)
-UniformElectricFieldNumericIn2Plus1D.coords = {'t', 'x', 'y'}		-- ut oh, now we introduce metric signatures ... 
+UniformElectricFieldNumericIn2Plus1D.coords = {'t', 'x', 'y'}		-- ut oh, now we introduce metric signatures ...
 UniformElectricFieldNumericIn2Plus1D.xmin = {-1, -1, -1}
 UniformElectricFieldNumericIn2Plus1D.xmax = {1, 1, 1}
 UniformElectricFieldNumericIn2Plus1D.startCoord = {0, 0, 0}
@@ -547,10 +549,10 @@ function UniformElectricFieldNumericIn2Plus1D:create_conns()
 end
 
 
--- here's a connection coefficient that gives rise to the stress-energy of a uniform electric field 
+-- here's a connection coefficient that gives rise to the stress-energy of a uniform electric field
 -- it's based on an analytical connection, but I haven't made a metric for it just yet
 local UniformElectricFieldNumeric = class(Geometry)
-UniformElectricFieldNumeric.coords = {'t', 'x', 'y', 'z'}		-- ut oh, now we introduce metric signatures ... 
+UniformElectricFieldNumeric.coords = {'t', 'x', 'y', 'z'}		-- ut oh, now we introduce metric signatures ...
 UniformElectricFieldNumeric.xmin = {-1, -1, -1}
 UniformElectricFieldNumeric.xmax = {1, 1, 1}
 UniformElectricFieldNumeric.startCoord = {0, 0, 0}
@@ -632,8 +634,8 @@ end
 
 
 local App = require 'imguiapp.withorbit'()
-
-App.title = 'reconstruct surface from geodesics' 
+App.viewUseBuiltinMatrixMath = true
+App.title = 'reconstruct surface from geodesics'
 App.viewDist = 10
 
 function App:initGL()
@@ -642,6 +644,37 @@ function App:initGL()
 
 	self.controlsOpened = true
 	self.geomID = 1
+
+	self.lineVtxs = ffi.new'vec3f_t[2]'
+	self.lineObj = GLSceneObject{
+		program = {
+			version = 'latest',
+			header = 'precision highp float;',
+			vertexCode = [[
+in vec3 vertex;
+uniform mat4 mvProjMat;
+void main() {
+	gl_Position = mvProjMat * vec4(vertex, 1.);
+}
+]],
+			fragmentCode = [[
+out vec4 fragColor;
+uniform vec3 color;
+void main() {
+	fragColor = vec4(color, 1.);
+}
+]],
+		},
+		vertexes = {
+			data = ffi.cast('float*', self.lineVtxs),
+			size = ffi.sizeof'vec3f_t' * 2,
+			dim = 3,
+			count = 2,
+		},
+		geometry = {
+			mode = gl.GL_LINES,
+		},
+	}
 
 	self:buildSurface'Polar'
 end
@@ -652,7 +685,7 @@ local geomClassesForName = table{
 	{PolarAnholonomic = PolarAnholonomic},
 	{SphereSurface = SphereSurface},
 	{TorusSurface = TorusSurface},
-	{PoincareDisk2D = PoincareDisk2D},
+--	{PoincareDisk2D = PoincareDisk2D},	-- crashing
 	{Minkowski2D = Minkowski2D},
 	{Schwarzschild1Plus1 = Schwarzschild1Plus1},
 	{Schwarzschild1Plus1EOS = Schwarzschild1Plus1EOS},
@@ -661,18 +694,18 @@ local geomClassesForName = table{
 	{Cylinder = Cylinder},
 	{Sphere = Sphere},
 	{Torus = Torus},
-	{PoincareDisk3D = PoincareDisk3D},
+--	{PoincareDisk3D = PoincareDisk3D},	-- crashing
 	{UniformElectricFieldNumericIn2Plus1D = UniformElectricFieldNumericIn2Plus1D },
 	{Schwarzschild2Plus1EOS = Schwarzschild2Plus1EOS},
 	{SchwarzschildSphere2Plus1EOS = SchwarzschildSphere2Plus1EOS},
 	-- 4D
-	{UniformElectricFieldNumeric = UniformElectricFieldNumeric},
+--	{UniformElectricFieldNumeric = UniformElectricFieldNumeric},	-- crashing
 	{InfiniteWireMagneticFieldNumeric = InfiniteWireMagneticFieldNumeric},
 }
 local geomClassNames = geomClassesForName:map(function(kv) return (next(kv)) end)
 
 function App:buildSurface(geomName)
-	assert(geomName)	
+	assert(geomName)
 	local loc, geomClass = geomClassesForName:find(nil, function(kv)
 		return next(kv) == geomName
 	end)
@@ -685,29 +718,34 @@ function App:buildSurface(geomName)
 --]]
 
 	self.animShader = GLProgram{
+		version = 'latest',
+		header = 'precision highp float;',
 		vertexCode = [[
-varying vec4 color;
+in vec3 vertex;
+in vec3 vertex2;
+in vec3 color;
+out vec3 colorv;
 uniform float t;
+uniform mat4 mvProjMat;
 void main() {
-	color = gl_Color;
-	
-	vec3 pos1 = gl_Vertex.xyz; 
-	vec3 pos2 = gl_MultiTexCoord0.xyz;
+	colorv = color;
+	vec3 pos1 = vertex.xyz;
+	vec3 pos2 = vertex2.xyz;
 	vec3 pos = mix(pos1, pos2, t);
-	gl_Position = gl_ModelViewProjectionMatrix * vec4(pos, 1.);
+	gl_Position = mvProjMat * vec4(pos, 1.);
 }
 ]],
 		fragmentCode = [[
-varying vec4 color;
+in vec3 colorv;
+out vec4 fragColor;
 void main() {
-	gl_FragColor = color;
+	fragColor = vec4(colorv, 1.);
 }
 ]],
 		uniforms = {t = 0},
 	}:useNone()
 
 	self.geom = geomClass(self)
-
 
 
 	local n = #self.geom.coords
@@ -719,11 +757,11 @@ void main() {
 
 	self.xmin = self.geom and self.geom.xmin or matrix{n}:lambda(I(-1))
 	self.xmax = self.geom and self.geom.xmax or matrix{n}:lambda(I(1))
-	
+
 	self.view.ortho = n == 2
 
 --[=[ opencl code
-	-- regenerate these to prevent ffi cdef redefs	
+	-- regenerate these to prevent ffi cdef redefs
 	self.rank1Type = 'rank1_t'
 	self.rank2Type = 'rank2_t'
 	local rank1TypeCode = 'typedef real '..self.rank1Type..'['..n..'];'
@@ -765,16 +803,16 @@ void main() {
 		header = self.headerCode,
 		argsOut = {self.xsBuf},
 		body = template([[
-<? for j=0,n-1 do 
+<? for j=0,n-1 do
 ?>	xs[index][<?=j?>] = (i.s<?=j?> - 2) * dx_<?=j?> + xmin_<?=j?>;
-<? end 
+<? end
 ?>]], {n = n}),
 	}()
---]=]	
+--]=]
 	--]]
 
 --[=[ opencl
-	if self.geom.createMetric 
+	if self.geom.createMetric
 	or self.geom.create_gs
 	then
 		self.gsBuf = self.domain:buffer{name='gs', type=self.rank2Type}
@@ -789,16 +827,11 @@ function App:rebuildSurface()
 
 	local n = #self.size
 
-	if self.list and self.list.id then
-		gl.glDeleteLists(self.list.id, 1)
-	end
-	self.list = {}
-
 	-- if we are calculating the connection from discrete derivatives of the metric ...
-	if self.geom.createMetric 
+	if self.geom.createMetric
 	or self.geom.create_gs
 	then
-		local gs = self.geom.create_gs and self.geom:create_gs() or self.geom:calcFromEqns_gs() 
+		local gs = self.geom.create_gs and self.geom:create_gs() or self.geom:calcFromEqns_gs()
 		--or self.size:lambda(function(...) return matrix{n,n}:ident() end)
 		local gUs = self.size:lambda(function(...)
 			return gs[{...}]:inv()
@@ -833,7 +866,7 @@ function App:rebuildSurface()
 				return s
 			end)
 			local err = (check1 - check2):norm()
-			if err ~= 0 
+			if err ~= 0
 			and err == err	-- skip the nans
 			then
 				print('check1')
@@ -847,7 +880,7 @@ function App:rebuildSurface()
 		if self.geom and self.geom.create_conns then
 			self.geom:testExact()
 		end
-	
+
 	else
 		-- if calcFromEqns_gs isn't there, then rely on create_conns for providing the initial connections
 		self.conns = self.geom:create_conns()
@@ -877,7 +910,7 @@ function App:rebuildSurface()
 
 print'building surface...'
 	-- now to reconstruct the es based on the conns ...
-	-- [=[ flood fill 
+	-- [=[ flood fill
 	local todo = table{i}
 	local sofar = {[tostring(index)] = true}
 	while #todo > 0 do
@@ -887,8 +920,8 @@ print'building surface...'
 		local _ = matrix.index
 		for k=1,n do
 			local connk = conn(_,_,k)
-	
-			for dir=-1,1,2 do 
+
+			for dir=-1,1,2 do
 				local nextIndex = matrix(index)
 				nextIndex[k] = nextIndex[k] + dir
 				-- skip the edges
@@ -896,7 +929,7 @@ print'building surface...'
 				and not sofar[tostring(nextIndex)]
 				then
 					local nextConnK = self.conns[nextIndex](_,_,k)
-			
+
 					-- cheating to get around anholonomic coordinate systems
 					-- technically I should be using commutation coefficients or something
 					local len = 1
@@ -904,16 +937,16 @@ print'building surface...'
 						local lens = self.geom:get_basis_lengths(self.xs[index]:unpack())
 						len = len * lens[k]
 					end
-		
+
 					-- derivative along coordinate
 					local ds = dir * self.dx[k] * len
-				
+
 					local eOrig = self.es[index]
 					local XOrig = self.Xs[index]
-					
+
 					local e = matrix(eOrig)
 					local X = matrix(XOrig)
-					
+
 					--[[ forward-euler
 					e = e + (e * connk) * ds
 					X = X + e(_,k) * ds
@@ -954,7 +987,7 @@ print'building surface...'
 						local c,d = connk[2]:unpack()
 						local asym = (a - d) / 2
 						local discr = asym^2 + b * c
-						
+
 						local de
 
 						-- [a b]
@@ -984,7 +1017,7 @@ print'building surface...'
 								end
 							end
 						-- [a b]
-						-- [0 a] for a real and b nonzero 
+						-- [0 a] for a real and b nonzero
 						elseif a == d and b ~= 0 then
 							-- TODO solve this without eigen-decomposition
 							error("defective matrix "..connk)
@@ -1010,7 +1043,7 @@ print'building surface...'
 								return evR * matrix{
 									{math.exp(ds * l1), 0},
 									{0, math.exp(ds * l2)}
-								} * evL						
+								} * evL
 							end
 						-- [a 0]
 						-- [c d]
@@ -1022,7 +1055,7 @@ print'building surface...'
 								return evR * matrix{
 									{math.exp(ds * l1), 0},
 									{0, math.exp(ds * l2)}
-								} * evL						
+								} * evL
 							end
 						elseif discr == 0 then	-- means (a-d)^2 = 4*b*c, then we have multiplicity 2
 							error"here"
@@ -1038,7 +1071,7 @@ print'building surface...'
 							-- y = t
 							-- x = 1/c ((a-d)/2 - sqrt( ((a-d)/2)^2 + bc )) t
 							local avg = (a + d) / 2
-							local sd = complex.sqrt(discr) 
+							local sd = complex.sqrt(discr)
 							local l1, l2 = avg + sd, avg - sd
 							local evR = matrix{{asym + sd, asym - sd}, {c, c}}
 							local evL = matrix{
@@ -1054,12 +1087,12 @@ print'building surface...'
 						else -- discr < 0	-- complex eigenvectors
 							error"here"
 						end
-						
+
 						X = int_rk4(0, X, function(s) return (e * de(s))(_,k) end, ds)
 						e = e * de(ds)
 					end
 					--]]
-					
+
 					--[[ normalize columns
 					e = e:T()
 					for k=1,n do
@@ -1101,7 +1134,7 @@ print('e='..e)
 					end
 					sofar[tostring(nextIndex)] = true
 				end
-			end	
+			end
 		end
 	end
 	--]]
@@ -1117,6 +1150,62 @@ print('e='..e)
 	for i in self.size:range() do
 		self.Xs[i] = self.Xs[i] - com
 	end
+
+	local vertexes = table()
+	local vertex2s = table()
+	local colors = table()
+	local sizeMinusOne = self.size-1
+	for indexMinusOne in (sizeMinusOne-1):range() do
+		local index = indexMinusOne+1
+		for k=1,n do
+			if index[k] < sizeMinusOne[k] then
+				local nextIndex = matrix(index)
+				nextIndex[k] = nextIndex[k] + 1
+
+				local color = (index-1):ediv(sizeMinusOne)
+				colors:append{color[1] or 0, color[2] or 0, color[3] or .5}
+				local vertex2 = self.xs[index]
+				vertex2s:append{vertex2[1] or 0, vertex2[2] or 0, vertex2[3] or 0}
+				local vertex = self.Xs[index]
+				vertexes:append{vertex[1] or 0, vertex[2] or 0, vertex[3] or 0}
+
+				local color = (nextIndex-1):ediv(sizeMinusOne)
+				colors:append{color[1] or 0, color[2] or 0, color[3] or .5}
+				local vertex2 = self.xs[nextIndex]
+				vertex2s:append{vertex2[1] or 0, vertex2[2] or 0, vertex2[3] or 0}
+				local vertex = self.Xs[nextIndex]
+				vertexes:append{vertex[1] or 0, vertex[2] or 0, vertex[3] or 0}
+			end
+		end
+	end
+
+	self.surfaceObj = GLSceneObject{
+		program = self.animShader,
+		geometry = {
+			mode = gl.GL_LINES,
+		},
+		vertexes = {
+			data = vertexes,
+			count = #vertexes / 3,
+			dim = 3,
+		},
+		attrs = {
+			vertex2 = {
+				buffer = {
+					data = vertex2s,
+					count = #vertex2s / 3,
+					dim = 3,
+				},
+			},
+			color = {
+				buffer = {
+					data = colors,
+					count = #colors / 3,
+					dim = 3,
+				},
+			},
+		},
+	}
 end
 
 function App:drawGrid()
@@ -1125,66 +1214,46 @@ function App:drawGrid()
 	ymin = ymin + self.view.pos.y
 	xmax = xmax + self.view.pos.x
 	ymax = ymax + self.view.pos.y
-	
-	gl.glColor3f(.1, .1, .1)
+
+	self.lineObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
+	self.lineObj.uniforms.color = {.1, .1, .1}
+
 	local xrange = xmax - xmin
 	local xstep = 10^math.floor(math.log(xrange, 10) - .5)
 	local xticmin = math.floor(xmin/xstep)
 	local xticmax = math.ceil(xmax/xstep)
-	gl.glBegin(gl.GL_LINES)
+
 	for x=xticmin,xticmax do
-		gl.glVertex2f(x*xstep,ymin)
-		gl.glVertex2f(x*xstep,ymax)
+		self.lineVtxs[0]:set(x*xstep, ymin, 0)
+		self.lineVtxs[1]:set(x*xstep, ymax, 0)
+		self.lineObj.vertexes:bind():updateData():unbind()
+		self.lineObj:draw()
 	end
-	gl.glEnd()
+
 	local yrange = ymax - ymin
 	local ystep = 10^math.floor(math.log(yrange, 10) - .5)
 	local yticmin = math.floor(ymin/ystep)
 	local yticmax = math.ceil(ymax/ystep)
-	gl.glBegin(gl.GL_LINES)
 	for y=yticmin,yticmax do
-		gl.glVertex2f(xmin,y*ystep)
-		gl.glVertex2f(xmax,y*ystep)
+		self.lineVtxs[0]:set(xmin, y*ystep, 0)
+		self.lineVtxs[1]:set(xmax, y*ystep, 0)
+		self.lineObj.vertexes:bind():updateData():unbind()
+		self.lineObj:draw()
 	end
-	gl.glEnd()
 
-	gl.glColor3f(.5, .5, .5)
-	gl.glBegin(gl.GL_LINES)
-	gl.glVertex2f(xmin, 0)
-	gl.glVertex2f(xmax, 0)
-	gl.glVertex2f(0, ymin)
-	gl.glVertex2f(0, ymax)
-	gl.glEnd()
+	self.lineObj.uniforms.color = {.5, .5, .5}
+
+	self.lineVtxs[0]:set(xmin, 0, 0)
+	self.lineVtxs[1]:set(xmax, 0, 0)
+	self.lineObj.vertexes:bind():updateData():unbind()
+	self.lineObj:draw()
+
+	self.lineVtxs[0]:set(0, ymin, 0)
+	self.lineVtxs[1]:set(0, ymax, 0)
+	self.lineObj.vertexes:bind():updateData():unbind()
+	self.lineObj:draw()
 end
 
-
-local function glColor(m)
-	if #m == 2 then
-		gl.glColor3d(m[1], m[2], .5)
-	elseif #m == 3 then
-		gl.glColor3d(m:unpack())
-	elseif #m == 4 then
-		gl.glColor3d(table.unpack(m,1,3))
-	else
-		error"can't color this many dimensions"
-	end
-end
-
-local function glTexCoord(m)
-	assert(({
-		[2] = gl.glTexCoord2d,
-		[3] = gl.glTexCoord3d,
-		[4] = gl.glTexCoord4d,
-	})[#m])(m:unpack())
-end
-
-local function glVertex(m)
-	assert(({
-		[2] = gl.glVertex2d,
-		[3] = gl.glVertex3d,
-		[4] = gl.glVertex4d,
-	})[#m])(m:unpack())
-end
 
 local animating = false
 local lastTime = 0
@@ -1196,37 +1265,16 @@ function App:update()
 
 	local n = #self.size
 
-	local thisTime = os.clock()	
+	local thisTime = os.clock()
 	if animating then
 		local deltaTime = (thisTime - lastTime) / math.pi
 		gui.animTime = (((gui.animTime + deltaTime) + 1) % 2) - 1
 	end
 	lastTime = thisTime
-	
-	self.animShader:use()
 
-	gl.glUniform1f(self.animShader.uniforms.t.loc, .5 - .5 * math.cos(math.pi * gui.animTime))
-
-	glCall(self.list, function()
-		--gl.glColor3f(0,1,1)
-		gl.glBegin(gl.GL_LINES)
-		local sizeMinusOne = self.size-1
-		for indexMinusOne in (sizeMinusOne-1):range() do
-			local index = indexMinusOne+1
-			for k=1,n do
-				if index[k] < sizeMinusOne[k] then
-					local nextIndex = matrix(index)
-					nextIndex[k] = nextIndex[k] + 1
-					glColor((index-1):ediv(sizeMinusOne))
-					glTexCoord(self.xs[index])
-					glVertex(self.Xs[index])
-					glColor((nextIndex-1):ediv(sizeMinusOne))
-					glTexCoord(self.xs[nextIndex])
-					glVertex(self.Xs[nextIndex])
-				end
-			end
-		end
-		gl.glEnd()
+	self.surfaceObj.uniforms.t = .5 - .5 * math.cos(math.pi * gui.animTime)
+	self.surfaceObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
+	self.surfaceObj:draw()
 
 --[[
 		local colors = matrix{
@@ -1245,22 +1293,19 @@ function App:update()
 			local u = self.Xs[index]
 			local e = self.es[index]:T()
 			for k=1,n do
-				glColor(colors[k])
+				glColor3f(colors[k])
 				glVertex(u)
 				glVertex(u + scale * e[k])
 			end
 		end
 		gl.glEnd()
 		gl.glPopMatrix()
---]]	
-	end)
-
-	GLProgram:useNone()
+--]]
 
 	if n == 2 then
 		self:drawGrid()
 	end
-		
+
 	App.super.update(self)
 end
 
@@ -1269,7 +1314,7 @@ function App:updateGUI()
 		if ig.igButton(animating and 'Stop Animation' or 'Start Animation') then
 			animating = not animating
 		end
-		
+
 		ig.luatableTooltipSliderFloat('animation coefficient', gui, 'animTime', -1, 1)
 
 		if ig.luatableTooltipCombo('coordinate system', self, 'geomID', geomClassNames) then
