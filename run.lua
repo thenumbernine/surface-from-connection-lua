@@ -148,7 +148,14 @@ function Geometry:init(app)
 	self.startCoord = matrix(self.startCoord)
 
 	self.coordVars = table.map(self.coords, function(name)
-		return symmath.var(name)
+		local var = symmath.var(name)
+		for _,p in ipairs(require 'symmath.tensor.symbols'.greekSymbolsAndNames) do
+			local k,v = next(p)
+			if var.name == v then
+				var:nameForExporter('Lua', k)
+			end
+		end
+		return var
 	end)
 
 	if self.createMetric then
