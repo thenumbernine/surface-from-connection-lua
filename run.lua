@@ -656,7 +656,7 @@ function App:initGL()
 	self.lineObj = GLSceneObject{
 		program = {
 			version = 'latest',
-			header = 'precision highp float;',
+			precision = 'best',
 			vertexCode = [[
 in vec3 vertex;
 uniform mat4 mvProjMat;
@@ -726,7 +726,7 @@ function App:buildSurface(geomName)
 
 	self.animShader = GLProgram{
 		version = 'latest',
-		header = 'precision highp float;',
+		precision = 'best',
 		vertexCode = [[
 in vec3 vertex;
 in vec3 vertex2;
