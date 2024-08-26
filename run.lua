@@ -641,7 +641,6 @@ end
 
 
 local App = require 'imguiapp.withorbit'()
-App.viewUseBuiltinMatrixMath = true
 App.title = 'reconstruct surface from geodesics'
 App.viewDist = 10
 
