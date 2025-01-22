@@ -29,105 +29,11 @@ local function int_rk4(r, q, dq_dr, dr)
 	return q + (k1 + 2 * k2 + 2 * k3 + k4) * dr / 6, r + dr
 end
 
-local function permutations(args)
-	local parity = args.parity or (#args.elements%2==0 and 1 or -1)
-	local p = args.elements
-	local callback = args.callback
-	local index = args.index
-	if args.size then
-		if index and #index == args.size then
-			return callback(index, parity)
-		end
-	else
-		if #p == 0 then
-			return callback(index, parity)
-		end
-	end
-	for i=1,#p do
-		local subset = table(p)
-		local subindex = table(index)
-		subindex:insert(subset:remove(i))
-		parity = parity * -1		-- TODO times -1 or times the distance of the swap?
-		if permutations{
-			elements = subset,
-			callback = callback,
-			index = subindex,
-			size = args.size,
-			parity = parity,
-		} then
-			return true
-		end
-	end
-end
-
-function matrix.det(m)
-	local dim = m:size()
-	local volume = table.combine(dim, function(a,b) return a * b end) or 0
-	if volume == 0 then return 1 end
-	if #dim ~= 2 then error("determinant only works on degree-2 matrices") end
-	if dim[1] ~= dim[2] then error("determinant only works on square matrices") end
-
-	local n = dim[1]
-	if n == 1 then return m[1][1] end
-
-	-- any further -- use recursive case
-	local result = 0
-	permutations{
-		elements = range(n),
-		callback = function(index, parity)
-			local product
-			for i=1,n do
-				local entry = m[i][index[i]]
-				if not product then
-					product = entry
-				else
-					product = product * entry
-				end
-			end
-			result = result + parity * product
-		end,
-	}
-	return result
-end
---matrix.__tostring = tolua
-
 function matrix:isfinite()
 	for i in self:iter() do
 		if not math.isfinite(self[i]) then return false end
 	end
 	return true
-end
-
-function matrix:ident()
-	assert(#self == 2 and self:degree() == 1)
-	return self:lambda(function(i,j)
-		return i == j and 1 or 0
-	end)
-end
-
-function matrix:inv()
-	local size = self:size()
-	assert(#size == 2, "must be a matrix, not a vector or higher dimension array")
-	assert(size[1] == size[2], "must be a square matrix, not a rectangular matrix")
-	local n = size[1]
-	if n == 2 then
-		local a,b = self[1]:unpack()
-		local c,d = self[2]:unpack()
-		local det = a * d - b * c
-		return matrix{
-			{d, -b},
-			{-c, a}
-		} / det
-	elseif n == 3 then
-		-- transpose, +-+- sign stagger, for each element remove that row and column and
-		return matrix{
-			{self[2][2]*self[3][3]-self[2][3]*self[3][2], self[1][3]*self[3][2]-self[1][2]*self[3][3], self[1][2]*self[2][3]-self[1][3]*self[2][2]},
-			{self[2][3]*self[3][1]-self[2][1]*self[3][3], self[1][1]*self[3][3]-self[1][3]*self[3][1], self[1][3]*self[2][1]-self[1][1]*self[2][3]},
-			{self[2][1]*self[3][2]-self[2][2]*self[3][1], self[1][2]*self[3][1]-self[1][1]*self[3][2], self[1][1]*self[2][2]-self[1][2]*self[2][1]},
-		} / self:det()
-	else
-		error"idk how to invert this"
-	end
 end
 
 
@@ -765,6 +671,10 @@ void main() {
 	self.xmax = self.geom and self.geom.xmax or matrix{n}:lambda(I(1))
 
 	self.view.ortho = n == 2
+	-- reset view every time you change charts
+	self.view.pos:set(0,0,self.viewDist)
+	self.view.orbit:set(0,0,0)
+	self.view.angle:set(0,0,0,1)
 
 --[=[ opencl code
 	-- regenerate these to prevent ffi cdef redefs
@@ -830,18 +740,22 @@ void main() {
 end
 
 function App:rebuildSurface()
-
+print()
+print('App:rebuildSurface...')
 	local n = #self.size
 
 	-- if we are calculating the connection from discrete derivatives of the metric ...
 	if self.geom.createMetric
 	or self.geom.create_gs
 	then
+print('creating metric...')
 		local gs = self.geom.create_gs and self.geom:create_gs() or self.geom:calcFromEqns_gs()
-		--or self.size:lambda(function(...) return matrix{n,n}:ident() end)
+		--or self.size:lambda(function(...) return matrix{n,n}:eye() end)
+print('creating metric inverse...')
 		local gUs = self.size:lambda(function(...)
 			return gs[{...}]:inv()
 		end)
+print('creating metric derivatives...')
 		local dgs = self.size:lambda(function(...)
 			local i = matrix{...}
 			-- dg_abc = dg_bc/dx^a
@@ -852,10 +766,11 @@ function App:rebuildSurface()
 				-- using a first-order derivative
 				return (gs[ip] - gs[im]) / (self.xs[ip][a] - self.xs[im][a])
 			end)
-			-- reorientate dg_abc = g_ab,c
+			-- reshape dg_abc = g_ab,c
 			return matrix{n,n,n}:lambda(function(a,b,c) return dg[c][a][b] end)
 		end)
 
+print('creating connections...')
 		self.conns = self.size:lambda(function(...)
 			local i = matrix{...}
 			local dg = dgs[i]
@@ -884,10 +799,11 @@ function App:rebuildSurface()
 			return check2
 		end)
 		if self.geom and self.geom.create_conns then
+print('comparing numeric to exact...')
 			self.geom:testExact()
 		end
-
 	else
+print('creating connections...')
 		-- if calcFromEqns_gs isn't there, then rely on create_conns for providing the initial connections
 		self.conns = self.geom:create_conns()
 	end
@@ -906,7 +822,7 @@ function App:rebuildSurface()
 		i[j] = math.clamp(i[j], 2, self.size[j]-1)
 		-- TODO reset the start coord in the GUI if it has to be clamped
 	end
-	self.es[i] = matrix{n,n}:ident()
+	self.es[i] = matrix{n,n}:eye()
 	local function withinEdge(index,size)
 		for i=1,n do
 			if index[i] <= 1 or index[i] >= size[i] then return false end
