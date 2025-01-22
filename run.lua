@@ -1,5 +1,7 @@
 #! /usr/bin/env luajit
-require 'ext'
+local math = require 'ext.math'
+local class = require 'ext.class'
+local table = require 'ext.table'
 local bit = require 'bit'
 local ig = require 'imgui'
 local gl = require 'gl'
@@ -137,15 +139,17 @@ what each geometry subclass needs:
 * xmin, xmax
 * startCoord (where to start the surface generation at.  this is very important.
 * one of the two:
-	* createMetric, if the geometry is to use an analytical metric
-	* create_conns.  otherwise these return identity g_ab's and zero Conn^a_bc's.
+	* create_gs - to calculate the metric numerically
+	* createMetric - to calculate the metric analytically based on the coordinate chart
+	* create_conns - to use an identity metric and numerical connections
+	* ... otherwise these return identity g_ab's and zero Γ^a_bc's.
 --]]
 
 
 -- 2D geometries
 
 
-local Polar = class(Geometry)
+local Polar = Geometry:subclass()
 Polar.coords = {'r', 'θ'}
 -- [[ initialize our basis of e=I at r=1 ...
 Polar.xmin = matrix{1, 0}
@@ -173,7 +177,9 @@ function Polar:createMetric()
 	return symmath.Tensor('_ab', {1, 0}, {0, r^2})
 end
 --]]
---[[ purely numerically
+
+-- [[ purely numerically
+-- ... if this and create_gs/createMetric is enabled then this is only used to calculate numerical error of connections
 function Polar:create_conns()
 	return self.app.size:lambda(function(...)
 		local x = self.app.xs[{...}]
@@ -199,7 +205,7 @@ end
 -- Otherwise how does it know how far to integrate the geodesics
 -- to get to the next coordinate location?
 -- This information is typically stored in the metric of the holonomic coordinate map.
-local PolarAnholonomic = class(Geometry)
+local PolarAnholonomic = Geometry:subclass()
 PolarAnholonomic.coords = {'r', 'θ'}
 PolarAnholonomic.xmin = matrix{1, 0}
 PolarAnholonomic.xmax = matrix{10, 2 * math.pi}
@@ -223,7 +229,7 @@ end
 
 -- sphere surface likewise is a 2 dimensional system inside 3 dimensions
 -- like cyl surface, it needs extrinsic curvature information to be properly rebuilt
-local SphereSurface = class(Geometry)
+local SphereSurface = Geometry:subclass()
 local eps = .01
 SphereSurface.coords = {'θ', 'φ'}
 SphereSurface.xmin = matrix{eps, eps}
@@ -241,7 +247,7 @@ function SphereSurface:createMetric()
 end
 
 
-local TorusSurface = class(Geometry)
+local TorusSurface = Geometry:subclass()
 TorusSurface.coords = {'θ', 'φ'}
 TorusSurface.xmin = {-math.pi, -math.pi}
 TorusSurface.xmax = {math.pi, math.pi}
@@ -253,7 +259,7 @@ function TorusSurface:createMetric()
 	return symmath.Tensor('_ab', {r^2, 0}, {0, (R + r * symmath.sin(theta))^2})
 end
 
-local PoincareDisk2D = class(Geometry)
+local PoincareDisk2D = Geometry:subclass()
 PoincareDisk2D.coords = {'u', 'v'}
 PoincareDisk2D.xmin = {-1, -1}
 PoincareDisk2D.xmax = {1, 1}
@@ -265,7 +271,7 @@ end
 
 
 -- hmm, how to incorporate signature into the metric ...
-local Minkowski2D = class(Geometry)
+local Minkowski2D = Geometry:subclass()
 Minkowski2D.coords = {'t', 'x'}
 Minkowski2D.xmin = {-1, -1}
 Minkowski2D.xmax = {1, 1}
@@ -277,7 +283,7 @@ end
 
 -- here's Schwarzschild in time and in radial
 -- it is treating Rs as constant, which means this metric is true for the spacetime *outside* of the massive body
-local Schwarzschild1Plus1 = class(Geometry)
+local Schwarzschild1Plus1 = Geometry:subclass()
 Schwarzschild1Plus1.coords = {'r', 't'}
 Schwarzschild1Plus1.xmin = {-2, -2}
 Schwarzschild1Plus1.xmax = {2, 2}
@@ -291,9 +297,9 @@ end
 -- Schwarzschild in time and radial
 -- backwards from traditional order: r, t (so that time can point upwards)
 -- except for within and outside of the matter source
--- this is my first metric that is based on numerically specifying g_ab, then computing Conn^a_bc
+-- this is my first metric that is based on numerically specifying g_ab, then computing Γ^a_bc
 -- since this doesn't have an extra dimension to anchor it, as the spacetime grows from r+ to r- it gets really twisted
-local Schwarzschild1Plus1EOS = class(Geometry)
+local Schwarzschild1Plus1EOS = Geometry:subclass()
 Schwarzschild1Plus1EOS.coords = {'r', 't'}
 Schwarzschild1Plus1EOS.xmin = {-2, -2}
 Schwarzschild1Plus1EOS.xmax = {2, 2}
@@ -313,7 +319,7 @@ function Schwarzschild1Plus1EOS:create_gs()
 end
 
 -- here's one from section 2.5 of the "Covariant Loop Quantum Gravity" book
-local LagrangianTotalEnergy = class(Geometry)
+local LagrangianTotalEnergy = Geometry:subclass()
 LagrangianTotalEnergy.coords = {'a', 'b'}
 LagrangianTotalEnergy.xmin = {-2, -2}
 LagrangianTotalEnergy.xmax = {2, 2}
@@ -331,7 +337,7 @@ end
 -- 3D geometries
 
 
-local Cylinder = class(Geometry)
+local Cylinder = Geometry:subclass()
 Cylinder.coords = {'r', 'θ', 'z'}
 Cylinder.xmin = {1, 0, -5}
 Cylinder.xmax = {10, 2*math.pi, 5}
@@ -342,7 +348,7 @@ function Cylinder:createMetric()
 end
 
 
-local Sphere = class(Geometry)
+local Sphere = Geometry:subclass()
 local eps = .05	-- the holonomic connection gets singularities (cot theta = inf) at the boundaries
 				-- this could be avoided if the metric was evaluated at grid centers instead of vertices.
 Sphere.coords = {'r', 'θ', 'φ'}
@@ -358,7 +364,7 @@ function Sphere:createMetric()
 end
 
 
-local Torus = class(Geometry)
+local Torus = Geometry:subclass()
 Torus.coords = {'r', 'θ', 'φ'}
 Torus.xmin = {1, -math.pi, -math.pi}
 Torus.xmax = {2, math.pi, math.pi}
@@ -370,7 +376,7 @@ function Torus:createMetric()
 end
 
 
-local PoincareDisk3D = class(Geometry)
+local PoincareDisk3D = Geometry:subclass()
 PoincareDisk3D.coords = {'u', 'v', 'w'}
 PoincareDisk3D.xmin = {-1, -1, -1}
 PoincareDisk3D.xmax = {1, 1, 1}
@@ -384,9 +390,9 @@ end
 -- Schwarzschild in time and radial
 -- backwards from traditional order: r, t (so that time can point upwards)
 -- except for within and outside of the matter source
--- this is my first metric that is based on numerically specifying g_ab, then computing Conn^a_bc
+-- this is my first metric that is based on numerically specifying g_ab, then computing Γ^a_bc
 -- since this doesn't have an extra dimension to anchor it, as the spacetime grows from r+ to r- it gets really twisted
-local Schwarzschild2Plus1EOS = class(Geometry)
+local Schwarzschild2Plus1EOS = Geometry:subclass()
 Schwarzschild2Plus1EOS.coords = {'t', 'x', 'y'}
 Schwarzschild2Plus1EOS.xmin = {-2, -2, -2}
 Schwarzschild2Plus1EOS.xmax = {2, 2, 2}
@@ -409,7 +415,7 @@ function Schwarzschild2Plus1EOS:create_gs()
 end
 
 
-local SchwarzschildSphere2Plus1EOS = class(Geometry)
+local SchwarzschildSphere2Plus1EOS = Geometry:subclass()
 SchwarzschildSphere2Plus1EOS.coords = {'t', 'r', 'φ'}
 SchwarzschildSphere2Plus1EOS.xmin = {-2, .1, -math.pi}
 SchwarzschildSphere2Plus1EOS.xmax = {2, 2, math.pi}
@@ -433,7 +439,7 @@ end
 
 -- here's a connection coefficient that gives rise to the stress-energy of a uniform electric field
 -- it's based on an analytical connection, but I haven't made a metric for it just yet
-local UniformElectricFieldNumericIn2Plus1D = class(Geometry)
+local UniformElectricFieldNumericIn2Plus1D = Geometry:subclass()
 UniformElectricFieldNumericIn2Plus1D.coords = {'t', 'x', 'y'}		-- ut oh, now we introduce metric signatures ...
 UniformElectricFieldNumericIn2Plus1D.xmin = {-1, -1, -1}
 UniformElectricFieldNumericIn2Plus1D.xmax = {1, 1, 1}
@@ -464,7 +470,7 @@ end
 
 -- here's a connection coefficient that gives rise to the stress-energy of a uniform electric field
 -- it's based on an analytical connection, but I haven't made a metric for it just yet
-local UniformElectricFieldNumeric = class(Geometry)
+local UniformElectricFieldNumeric = Geometry:subclass()
 UniformElectricFieldNumeric.coords = {'t', 'x', 'y', 'z'}		-- ut oh, now we introduce metric signatures ...
 UniformElectricFieldNumeric.xmin = {-1, -1, -1}
 UniformElectricFieldNumeric.xmax = {1, 1, 1}
@@ -500,7 +506,7 @@ end
 -- Still no analytical metric for this either.
 -- I got it from my file at "symmath/tests/electrovacuum/infinite wire no charge.lua"
 -- notice it is 4D, so I need to start thinking of how to handle that.
-local InfiniteWireMagneticFieldNumeric = class(Geometry)
+local InfiniteWireMagneticFieldNumeric = Geometry:subclass()
 InfiniteWireMagneticFieldNumeric.coords = {'t', 'r', 'φ', 'z'}
 InfiniteWireMagneticFieldNumeric.xmin = {-1, -1, -math.pi, -1}
 InfiniteWireMagneticFieldNumeric.xmax = {1, 1, math.pi, 1}
@@ -749,13 +755,20 @@ print('App:rebuildSurface...')
 	or self.geom.create_gs
 	then
 print('creating metric...')
-		local gs = self.geom.create_gs and self.geom:create_gs() or self.geom:calcFromEqns_gs()
+		local gs
+		if self.geom.create_gs then
+print('creating metric numerically...')
+			gs = self.geom:create_gs()
+		else
+print('creating metric analytically...')
+			gs = self.geom:calcFromEqns_gs()
+		end
 		--or self.size:lambda(function(...) return matrix{n,n}:eye() end)
-print('creating metric inverse...')
+print('creating metric inverse numerically...')
 		local gUs = self.size:lambda(function(...)
 			return gs[{...}]:inv()
 		end)
-print('creating metric derivatives...')
+print('creating metric derivatives numerically...')
 		local dgs = self.size:lambda(function(...)
 			local i = matrix{...}
 			-- dg_abc = dg_bc/dx^a
@@ -770,7 +783,7 @@ print('creating metric derivatives...')
 			return matrix{n,n,n}:lambda(function(a,b,c) return dg[c][a][b] end)
 		end)
 
-print('creating connections...')
+print('creating connections numerically...')
 		self.conns = self.size:lambda(function(...)
 			local i = matrix{...}
 			local dg = dgs[i]
@@ -798,12 +811,13 @@ print('creating connections...')
 			end
 			return check2
 		end)
+
 		if self.geom and self.geom.create_conns then
-print('comparing numeric to exact...')
+print('*** comparing numeric to exact ***')
 			self.geom:testExact()
 		end
 	else
-print('creating connections...')
+print('creating connections numerically...')
 		-- if calcFromEqns_gs isn't there, then rely on create_conns for providing the initial connections
 		self.conns = self.geom:create_conns()
 	end
