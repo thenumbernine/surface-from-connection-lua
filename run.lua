@@ -2,33 +2,29 @@
 local math = require 'ext.math'
 local class = require 'ext.class'
 local table = require 'ext.table'
-local bit = require 'bit'
 local ig = require 'imgui'
 local gl = require 'gl'
-local GLProgram = require 'gl.program'
 local matrix = require 'matrix'
-local complex = require 'complex'
 local symmath = require 'symmath'
-local template = require 'template'
-local clnumber = require 'cl.obj.number'
 local ffi = require 'ffi'
-local vec3f_t = require 'vec-ffi.vec3f'
+local vec3f = require 'vec-ffi.vec3f'
+local vec3d = require 'vec-ffi.vec3d'
 local GLSceneObject = require 'gl.sceneobject'
 
 --[[
 local CLEnv = require 'cl.obj.env'
 --]]
 
-local function int_fe(r, q, dq_dr, dr)
-	return q + dq_dr(r, q) * dr, r + dr
+local function int_fe(t, y, dy_dt, dt)
+	return y + dy_dt(t, y) * dt, t + dt
 end
 
-local function int_rk4(r, q, dq_dr, dr)
-	local k1 = dq_dr(r, q)
-	local k2 = dq_dr(r + .5 * dr, q + .5 * dr * k1)
-	local k3 = dq_dr(r + .5 * dr, q + .5 * dr * k2)
-	local k4 = dq_dr(r + dr, q + dr * k3)
-	return q + (k1 + 2 * k2 + 2 * k3 + k4) * dr / 6, r + dr
+local function int_rk4(t, y, dy_dt, dt)
+	local k1 = dy_dt(t, y)
+	local k2 = dy_dt(t + .5 * dt, y + .5 * dt * k1)
+	local k3 = dy_dt(t + .5 * dt, y + .5 * dt * k2)
+	local k4 = dy_dt(t + dt, y + dt * k3)
+	return y + (k1 + 2 * k2 + 2 * k3 + k4) * dt / 6, t + dt
 end
 
 function matrix:isfinite()
@@ -88,9 +84,29 @@ function Geometry:testExact()
 		return (app.conns[i][j] - exactConns[i][j]):norm()
 	end)
 
-	local x = matrix{app.size[1]-2}:lambda(function(i) return app.xs[i+1][1][1] end)
-	local y = matrix{app.size[2]-2}:lambda(function(j) return app.xs[1][j+1][2] end)
-	local z = (app.size-2):lambda(function(i,j) return connNumConnDiff[i+1][j+1] end)
+	local x,y,z
+
+	if app.size[1] == 1 then
+		x = matrix{1}:lambda(function(i) return app.xs[1][1][1] end)
+	else
+		x = matrix{app.size[1]-2}:lambda(function(i) return app.xs[i+1][1][1] end)
+	end
+
+	if app.size[2] == 1 then
+		y = matrix{1}:lambda(function(j) return app.xs[1][1][2] end)	-- TODO why the 2 in the z?
+	else
+		y = matrix{app.size[2]-2}:lambda(function(j) return app.xs[1][j+1][2] end)
+	end
+
+	local zrange = app.size - 2
+	zrange[1] = math.max(zrange[1], 1)
+	zrange[2] = math.max(zrange[2], 1)
+	z = zrange:lambda(function(i,j)
+		local iR = zrange[1] == 1 and i or i+1
+		local jR = zrange[2] == 1 and j or j+1
+		return connNumConnDiff[iR][jR]
+	end)
+
 	local gnuplot = require 'gnuplot'
 	gnuplot{
 		output = 'conn numeric vs analytic.png',
@@ -648,10 +664,15 @@ function App:buildSurface(geomName)
 	self.xmax = self.geom and self.geom.xmax or matrix{n}:lambda(I(1))
 
 	self.view.ortho = n == 2
+
 	-- reset view every time you change charts
 	self.view.pos:set(0,0,self.viewDist)
 	self.view.orbit:set(0,0,0)
 	self.view.angle:set(0,0,0,1)
+
+	-- e0
+	self.e0 = matrix{n,n}:eye()
+	-- ... conn0 also?
 
 --[=[ opencl code
 	-- regenerate these to prevent ffi cdef redefs
@@ -661,17 +682,10 @@ function App:buildSurface(geomName)
 	local rank2TypeCode = 'typedef real '..self.rank2Type..'['..n..'];'
 	local ffi = require 'ffi'
 	ffi.cdef(rank1TypeCode)
---]=]
 
-	--[[ cell centered, including borders
-	self.dx = matrix{n}:ones():emul(self.xmax - self.xmin):ediv(self.size)
-	self.xs = self.size:lambda(function(...) return (matrix{...} - .5):emul(self.dx) + self.xmin end)
-	--]]
-	-- [[ vertex centered, excluding borders, so position 2,2 is at xmin (useful for centering the corner vertex)
-	self.dx = matrix{n}:ones():emul(self.xmax - self.xmin):ediv(self.size-3)
-	self.xs = self.size:lambda(function(...) return (matrix{...} - 2):emul(self.dx) + self.xmin end)
+	local template = require 'template'
+	local clnumber = require 'cl.obj.number'
 
---[=[ opencl code
 	self.headerCode = table{
 		rank1TypeCode,
 		template([[
@@ -701,10 +715,7 @@ function App:buildSurface(geomName)
 <? end
 ?>]], {n = n}),
 	}()
---]=]
-	--]]
 
---[=[ opencl
 	if self.geom.createMetric
 	or self.geom.create_gs
 	then
@@ -720,6 +731,16 @@ function App:rebuildSurface()
 print()
 print('App:rebuildSurface...')
 	local n = #self.size
+
+
+	--[[ cell centered, including borders
+	self.dx = matrix{n}:ones():emul(self.xmax - self.xmin):ediv(self.size)
+	self.xs = self.size:lambda(function(...) return (matrix{...} - .5):emul(self.dx) + self.xmin end)
+	--]]
+	-- [[ vertex centered, excluding borders, so position 2,2 is at xmin (useful for centering the corner vertex)
+	self.dx = matrix{n}:ones():emul(self.xmax - self.xmin):ediv(self.size-3)
+	self.xs = self.size:lambda(function(...) return (matrix{...} - 2):emul(self.dx) + self.xmin end)
+
 
 	-- if we are calculating the connection from discrete derivatives of the metric ...
 	if self.geom.createMetric
@@ -804,10 +825,15 @@ print('creating connections numerically...')
 	local xInit = matrix(assert(self.geom.startCoord))
 	local i = ((xInit - self.geom.xmin):ediv(self.geom.xmax - self.geom.xmin):emul(self.size-3) + 2.5):map(math.floor)
 	for j=1,n do
-		i[j] = math.clamp(i[j], 2, self.size[j]-1)
+		if self.size[j] > 1 then
+			-- make sure we can finite-difference ... TODO this somewhere else, in the integration loop?
+			i[j] = math.clamp(i[j], 2, self.size[j]-1)
+		else
+			i[j] = 1
+		end
 		-- TODO reset the start coord in the GUI if it has to be clamped
 	end
-	self.es[i] = matrix{n,n}:eye()
+	self.es[i] = self.e0:clone()	--matrix{n,n}:eye()
 	local function withinEdge(index,size)
 		for i=1,n do
 			if index[i] <= 1 or index[i] >= size[i] then return false end
@@ -823,6 +849,7 @@ print'building surface...'
 	while #todo > 0 do
 		local index = todo:remove(1)
 		local conn = self.conns[index]
+if not conn then error("failed to get conn at index "..tostring(index)) end
 		-- for each direction ...
 		local _ = matrix.index
 		for k=1,n do
@@ -839,6 +866,7 @@ print'building surface...'
 
 					-- cheating to get around anholonomic coordinate systems
 					-- technically I should be using commutation coefficients or something
+					-- or maybe this isn't cheating since we should be integrating by coordinate distances, which were normalized out in anholonomic basis ...
 					local len = 1
 					if self.geom.get_basis_lengths then
 						local lens = self.geom:get_basis_lengths(self.xs[index]:unpack())
@@ -855,11 +883,17 @@ print'building surface...'
 					local X = matrix(XOrig)
 
 					--[[ forward-euler
+					local integrator = int_fe
+					--]]
+					-- [[ rk4
+					local integrator = int_rk4
+					--]]
+					--[[ forward-euler ... using connk vs nextConnK ?
 					e = e + (e * connk) * ds
 					X = X + e(_,k) * ds
 					--]]
 					-- [[ rk4 ...
-					e = int_rk4(0, e, function(s, e)
+					e = integrator(0, e, function(s, e)
 						-- treating connections as constant
 						--return e * connk
 						-- interpolating connections between cells
@@ -869,7 +903,7 @@ print'building surface...'
 						--local xNext = self.xs[nextIndex]
 						--return e * self.geom.calc.Conn( (x * s + xNext * (ds - s)) / ds  )(_,k)
 					end, ds)
-					X = int_rk4(0, X, function(s, X)
+					X = integrator(0, X, function(s, X)
 						local f = s / ds
 						-- constant:
 						--return eOrig(_,k)
@@ -877,7 +911,8 @@ print'building surface...'
 						return e(_,k) * f + eOrig(_,k) * (1 - f)
 					end, ds)
 					--]]
-					--[[
+					--[[ matrix-exponent to calculate parallel-propagator numerically (instead of numerically integrating the connection)
+					-- TODO eigen-decompose and then exponent the eigenvalues ...
 					do
 						-- if d/ds e = conn e then ...
 						-- then we can solve this as a linear dynamic system!
@@ -967,6 +1002,7 @@ print'building surface...'
 						elseif discr == 0 then	-- means (a-d)^2 = 4*b*c, then we have multiplicity 2
 							error"here"
 						elseif discr > 0 then
+							local complex = require 'complex'
 							-- 2D eigenvectors using the smaller eigenvalue
 							-- [a-λ, b]    [ a - (a+d)/2 + sqrt( ((a-d)/2)^2 + bc ),    b ]    [ (a-d)/2 + sqrt( ((a-d)/2)^2 + bc ), b ]
 							-- [c, d-λ] => [ c,    d - (a+d)/2 + sqrt( ((a-d)/2)^2 + bc ) ] => [ c, (d-a)/2 + sqrt( ((a-d)/2)^2 + bc ) ]
@@ -1061,6 +1097,7 @@ print('e='..e)
 	local vertexes = table()
 	local vertex2s = table()
 	local colors = table()
+-- [[
 	local sizeMinusOne = self.size-1
 	for indexMinusOne in (sizeMinusOne-1):range() do
 		local index = indexMinusOne+1
@@ -1085,6 +1122,33 @@ print('e='..e)
 			end
 		end
 	end
+--]]
+--[[ trying to get this to work with size=1
+	for index in self.size:range() do
+		for k=1,n do
+			if self.size[k] > 1
+			and index[k] < self.size[k]-1
+			then
+				local nextIndex = matrix(index)
+				nextIndex[k] = nextIndex[k] + 1
+
+				local color = (index-1):ediv((self.size-1):map(function(x) return math.max(x, 1) end))
+				colors:append{color[1] or 0, color[2] or 0, color[3] or .5}
+				local vertex2 = self.xs[index]
+				vertex2s:append{vertex2[1] or 0, vertex2[2] or 0, vertex2[3] or 0}
+				local vertex = self.Xs[index]
+				vertexes:append{vertex[1] or 0, vertex[2] or 0, vertex[3] or 0}
+
+				local color = (nextIndex-1):ediv((self.size-1):map(function(x) return math.max(x, 1) end))
+				colors:append{color[1] or 0, color[2] or 0, color[3] or .5}
+				local vertex2 = self.xs[nextIndex]
+				vertex2s:append{vertex2[1] or 0, vertex2[2] or 0, vertex2[3] or 0}
+				local vertex = self.Xs[nextIndex]
+				vertexes:append{vertex[1] or 0, vertex[2] or 0, vertex[3] or 0}
+			end
+		end
+	end
+--]]
 
 	self.surfaceObj = GLSceneObject{
 		program = {
@@ -1243,7 +1307,6 @@ function App:update()
 		local hudView = require 'glapp.view'{
 			angle = self.view.angle,
 		}
-		local vec3d = require 'vec-ffi.vec3d'
 		local aspectRatio = self.width / self.height
 		hudView.pos = hudView.angle:rotate(vec3d(4 * aspectRatio, 4, 5))
 		hudView:setup(aspectRatio)
@@ -1280,8 +1343,30 @@ function App:updateGUI()
 
 		local n = #self.size
 		for _,field in ipairs{'xmin', 'xmax', 'startCoord'} do
+			ig.igText(field == 'startCoord' and 'x0' or field)
 			for j=1,n do
 				if ig.luatableTooltipInputFloat(field..' '..j, self.geom[field], j, .01, .1, '%f', ig.ImGuiInputTextFlags_EnterReturnsTrue) then
+					if field == 'startCoord' then
+						self.geom.startCoord[j] = math.clamp(self.geom.startCoord[j], self.geom.xmin[j], self.geom.xmax[j])
+					end
+					self:rebuildSurface()
+				end
+				if j < n then ig.igSameLine() end
+			end
+		end
+
+		ig.igText'resolution'
+		for j=1,n do
+			if ig.luatableTooltipInputInt('size '..j, self.size, j, 0, 0, ig.ImGuiInputTextFlags_EnterReturnsTrue) then
+				self:rebuildSurface()
+			end
+			if j < n then ig.igSameLine() end
+		end
+
+		ig.igText'e0'
+		for i=1,n do
+			for j=1,n do
+				if ig.luatableTooltipInputFloat('e0_'..i..'_'..j, self.e0[i], j, .01, .1, '%f', ig.ImGuiInputTextFlags_EnterReturnsTrue) then
 					self:rebuildSurface()
 				end
 				if j < n then ig.igSameLine() end
