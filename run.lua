@@ -635,36 +635,7 @@ function App:buildSurface(geomName)
 	self.env = CLEnv()
 --]]
 
-	self.animShader = GLProgram{
-		version = 'latest',
-		precision = 'best',
-		vertexCode = [[
-in vec3 vertex;
-in vec3 vertex2;
-in vec3 color;
-out vec3 colorv;
-uniform float t;
-uniform mat4 mvProjMat;
-void main() {
-	colorv = color;
-	vec3 pos1 = vertex.xyz;
-	vec3 pos2 = vertex2.xyz;
-	vec3 pos = mix(pos1, pos2, t);
-	gl_Position = mvProjMat * vec4(pos, 1.);
-}
-]],
-		fragmentCode = [[
-in vec3 colorv;
-out vec4 fragColor;
-void main() {
-	fragColor = vec4(colorv, 1.);
-}
-]],
-		uniforms = {t = 0},
-	}:useNone()
-
 	self.geom = geomClass(self)
-
 
 	local n = #self.geom.coords
 	self.size = matrix{n}:lambda(I( ({[2]=64, [3]=16, [4]=8})[n] ))
@@ -1116,7 +1087,33 @@ print('e='..e)
 	end
 
 	self.surfaceObj = GLSceneObject{
-		program = self.animShader,
+		program = {
+			version = 'latest',
+			precision = 'best',
+			vertexCode = [[
+in vec3 vertex;
+in vec3 vertex2;
+in vec3 color;
+out vec3 colorv;
+uniform float t;
+uniform mat4 mvProjMat;
+void main() {
+	colorv = color;
+	vec3 pos1 = vertex.xyz;
+	vec3 pos2 = vertex2.xyz;
+	vec3 pos = mix(pos1, pos2, t);
+	gl_Position = mvProjMat * vec4(pos, 1.);
+}
+]],
+			fragmentCode = [[
+in vec3 colorv;
+out vec4 fragColor;
+void main() {
+	fragColor = vec4(colorv, 1.);
+}
+]],
+			uniforms = {t = 0},
+		},
 		geometry = {
 			mode = gl.GL_LINES,
 		},
@@ -1212,7 +1209,7 @@ function App:update()
 	self.surfaceObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
 	self.surfaceObj:draw()
 
---[[
+--[[ draw the basis at every point?
 		local colors = matrix{
 			{1,0,0},
 			{0,1,0},
@@ -1240,6 +1237,30 @@ function App:update()
 
 	if n == 2 then
 		self:drawGrid()
+	elseif n == 3 then
+		-- draw the xyz basis
+		-- TODO viewport instead?
+		local hudView = require 'glapp.view'{
+			angle = self.view.angle,
+		}
+		local vec3d = require 'vec-ffi.vec3d'
+		local aspectRatio = self.width / self.height
+		hudView.pos = hudView.angle:rotate(vec3d(4 * aspectRatio, 4, 5))
+		hudView:setup(aspectRatio)
+
+		-- draw basis
+		self.lineObj.uniforms.mvProjMat = hudView.mvProjMat.ptr
+
+		for i=1,3 do
+			self.lineObj.uniforms.color = {0, 0, 0}
+			self.lineObj.uniforms.color[i] = 1
+
+			self.lineVtxs[0]:set(0,0,0)
+			self.lineVtxs[1]:set(0,0,0)
+			self.lineVtxs[1].s[i-1] = 1
+			self.lineObj.vertexes:bind():updateData():unbind()
+			self.lineObj:draw()
+		end
 	end
 
 	App.super.update(self)
