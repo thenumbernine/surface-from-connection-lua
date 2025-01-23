@@ -12,7 +12,7 @@ local GLSceneObject = require 'gl.sceneobject'
 local CLEnv = require 'cl.obj.env'
 --]]
 
-local int_fe = [t, y, dy_dt, dt] 
+local int_fe = [t, y, dy_dt, dt]
 	(y + dy_dt(t, y) * dt, t + dt)
 
 local int_rk4 = [t, y, dy_dt, dt] do
@@ -184,7 +184,7 @@ end
 
 -- [[ purely numerically
 -- ... if this and create_gs/createMetric is enabled then this is only used to calculate numerical error of connections
-Polar.create_conns = [:] 
+Polar.create_conns = [:]
 	self.app.size:lambda([...] do
 		local x = self.app.xs[{...}]
 		local r, theta = x:unpack()
@@ -213,7 +213,7 @@ PolarAnholonomic.coords = {'r', 'θ'}
 PolarAnholonomic.xmin = matrix{1, 0}
 PolarAnholonomic.xmax = matrix{10, 2 * math.pi}
 PolarAnholonomic.startCoord = {1,0}
-PolarAnholonomic.create_conns = [:] 
+PolarAnholonomic.create_conns = [:]
 	self.app.size:lambda([i,j] do
 		local r = self.app.xs[i][j][1]
 		-- Γ^θ_rθ = -Γ^r_θθ = 1/r
@@ -302,7 +302,7 @@ Schwarzschild1Plus1EOS.coords = {'r', 't'}
 Schwarzschild1Plus1EOS.xmin = {-2, -2}
 Schwarzschild1Plus1EOS.xmax = {2, 2}
 Schwarzschild1Plus1EOS.startCoord = {2, 0}
-Schwarzschild1Plus1EOS.create_gs = [:] 
+Schwarzschild1Plus1EOS.create_gs = [:]
 	self.app.size:lambda([...] do
 		local r, t = self.app.xs[{...}]:unpack()
 		local mass = .1
@@ -321,7 +321,7 @@ LagrangianTotalEnergy.coords = {'a', 'b'}
 LagrangianTotalEnergy.xmin = {-2, -2}
 LagrangianTotalEnergy.xmax = {2, 2}
 LagrangianTotalEnergy.startCoord = {0, 0}
-LagrangianTotalEnergy.create_gs = [:] 
+LagrangianTotalEnergy.create_gs = [:]
 	self.app.size:lambda([...] do
 		local a, b = self.app.xs[{...}]:unpack()
 		local E = 10
@@ -360,7 +360,7 @@ Sphere.createMetric = [:] do
 end
 
 
--- TODO I'm betting x0 or e0 is off.  btw there's no way to customize e0(x0) ... 
+-- TODO I'm betting x0 or e0 is off.  btw there's no way to customize e0(x0) ...
 local Torus = Geometry:subclass()
 Torus.coords = {'r', 'θ', 'φ'}
 Torus.xmin = {1, -math.pi, -math.pi}
@@ -399,7 +399,7 @@ Schwarzschild2Plus1EOS.xmin = {-2, -2, -2}
 Schwarzschild2Plus1EOS.xmax = {2, 2, 2}
 --Schwarzschild2Plus1EOS.startCoord = {0, 2, 2}
 Schwarzschild2Plus1EOS.startCoord = {0, 0, 0}
-Schwarzschild2Plus1EOS.create_gs = [:] 
+Schwarzschild2Plus1EOS.create_gs = [:]
 	self.app.size:lambda([...] do
 		local t, x, y = self.app.xs[{...}]:unpack()
 		local mass = .05
@@ -420,7 +420,7 @@ SchwarzschildSphere2Plus1EOS.coords = {'t', 'r', 'φ'}
 SchwarzschildSphere2Plus1EOS.xmin = {-2, .1, -math.pi}
 SchwarzschildSphere2Plus1EOS.xmax = {2, 2, math.pi}
 SchwarzschildSphere2Plus1EOS.startCoord = {0, 1, 0}
-SchwarzschildSphere2Plus1EOS.create_gs = [:] 
+SchwarzschildSphere2Plus1EOS.create_gs = [:]
 	self.app.size:lambda([...] do
 		local t, r, phi = self.app.xs[{...}]:unpack()
 		local mass = .05
@@ -445,7 +445,7 @@ UniformElectricFieldNumericIn2Plus1D.xmax = {1, 1, 1}
 UniformElectricFieldNumericIn2Plus1D.startCoord = {0, 0, 0}
 UniformElectricFieldNumericIn2Plus1D.create_conns = [:] do
 	local E_over_sqrt_2 = 1
-	return self.app.size:lambda([...] 
+	return self.app.size:lambda([...]
 		matrix{
 			{
 				{0,E_over_sqrt_2,0},
@@ -544,8 +544,6 @@ InfiniteWireMagneticFieldNumeric.create_conns = [:] do
 end
 
 
-local I = [x] [] x
-
 local App = require 'imguiapp.withorbit'()
 App.title = 'reconstruct surface from geodesics'
 App.viewDist = 10
@@ -630,15 +628,21 @@ App.buildSurface = [:, geomName] do
 
 	self.geom = geomClass(self)
 
+	-- n = manifold dimension
 	local n = #self.geom.coords
-	self.size = matrix{n}:lambda(I( ({[2]=64, [3]=16, [4]=8})[n] ))
+
+	-- size = lattice size (not necessary correlating with points or lines)
+	self.size = matrix{n}:lambda([i] (({[2]=64, [3]=16, [4]=8})[n]) )
+
+	-- detail = how many extra steps between lattice points to emit lines
+	self.detail = matrix{n}:lambda([i] 10)
 
 --[[
 	self.domain = self.env:domain{size=self.size}
 --]]
 
-	self.xmin = self.geom and self.geom.xmin or matrix{n}:lambda(I(-1))
-	self.xmax = self.geom and self.geom.xmax or matrix{n}:lambda(I(1))
+	self.xmin = self.geom and self.geom.xmin or matrix{n}:lambda([] -1)
+	self.xmax = self.geom and self.geom.xmax or matrix{n}:lambda([] 1)
 
 	self.view.ortho = n == 2
 
@@ -1052,7 +1056,7 @@ print('e='..e)
 	--]]
 
 	-- recenter ...
-	local com = matrix{n}:lambda(I(0))
+	local com = matrix{n}:lambda([] 0)
 	for i in self.size:range() do
 		if self.Xs[i]:isfinite() then
 			com = com + self.Xs[i]
@@ -1068,7 +1072,8 @@ print('e='..e)
 	local colors = table()
 -- [[
 	local sizeMinusOne = self.size-1
-	for indexMinusOne in (sizeMinusOne-1):range() do
+	for indexMinusOne in sizeMinusOne:range() do
+print(indexMinusOne)
 		local index = indexMinusOne+1
 		for k=1,n do
 			if index[k] < sizeMinusOne[k] then
