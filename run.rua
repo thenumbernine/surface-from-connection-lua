@@ -138,8 +138,18 @@ what each geometry subclass needs:
 * one of the two:
 	* create_gs - to calculate the metric numerically
 	* createMetric - to calculate the metric analytically based on the coordinate chart
+	(in either case, if create_conns is defined, it is used to validate the numerical accuracy)
+* or if neither is chosen 
 	* create_conns - to use an identity metric and numerical connections
-	* ... otherwise these return identity g_ab's and zero Γ^a_bc's.
+* ... otherwise these return identity g_ab's and zero Γ^a_bc's.
+
+* also parallelPropagatorInvs for creating the parallel propagators ...
+
+then in gui we need options for:
+- propagate by connection via metric finite difference (if available)
+- propagate by connection provided (if available)
+- propagate by parallel propagator (if available)
+
 --]]
 
 
@@ -154,7 +164,7 @@ Cartesian2D.startCoord = {0, 0}
 Cartesian2D.create_conns = [:] self.app.size:lambda([...] matrix{2,2,2}:zeros())
 
 local Polar = Geometry:subclass()
-Polar.coords = {'r', 'θ'}
+Polar.coords = {'r', 'φ'}
 -- [[ initialize our basis of e=I at r=1 ...
 Polar.xmin = matrix{1, 0}
 Polar.xmax = matrix{10, 2 * math.pi}
@@ -181,13 +191,11 @@ Polar.createMetric = [:] do
 	return symmath.Tensor('_ab', {1, 0}, {0, r^2})
 end
 --]]
-
 -- [[ purely numerically
 -- ... if this and create_gs/createMetric is enabled then this is only used to calculate numerical error of connections
 Polar.create_conns = [:]
 	self.app.size:lambda([...] do
-		local x = self.app.xs[{...}]
-		local r, theta = x:unpack()
+		local r, theta = self.app.xs[{...}]:unpack()
 		-- 1/Γ^θ_θr = 1/Γ^θ_rθ = -Γ^r_θθ = r
 		return matrix{
 			{
@@ -202,6 +210,24 @@ Polar.create_conns = [:]
 	end)
 --]]
 
+-- propagator inverse, i.e. propagator of one-forms, since we are propagating our basis' coefficients in the embedded Cartesian basis, which is a one-form
+Polar.parallelPropagatorInvs = {
+	-- propagating along r ...
+	([w, dr, r, phi] do
+		local rL = r
+		local rR = r + dr
+		return matrix{w[1], w[2] * rR / rL}
+	end),
+	-- propagating along φ ...
+	([w, dphi, r, phi] do
+		local cos_dphi = math.cos(dphi)
+		local sin_dphi = math.sin(dphi)
+		return matrix{
+			w[1] * cos_dphi - r * w[2] * sin_dphi,
+			w[1] * sin_dphi / r + w[2] * cos_dphi
+		}
+	end),
+}
 
 -- The thing about non-holonomic geometry is
 -- it needs commutation coefficients as well.
@@ -209,7 +235,7 @@ Polar.create_conns = [:]
 -- to get to the next coordinate location?
 -- This information is typically stored in the metric of the holonomic coordinate map.
 local PolarAnholonomic = Geometry:subclass()
-PolarAnholonomic.coords = {'r', 'θ'}
+PolarAnholonomic.coords = {'r', 'φ'}
 PolarAnholonomic.xmin = matrix{1, 0}
 PolarAnholonomic.xmax = matrix{10, 2 * math.pi}
 PolarAnholonomic.startCoord = {1,0}
@@ -626,23 +652,41 @@ App.buildSurface = [:, geomName] do
 	self.env = CLEnv()
 --]]
 
-	self.geom = geomClass(self)
+	local geom = geomClass(self)
+	self.geom = geom
 
 	-- n = manifold dimension
-	local n = #self.geom.coords
+	local n = #geom.coords
 
 	-- size = lattice size (not necessary correlating with points or lines)
-	self.size = matrix{n}:lambda([i] (({[2]=64, [3]=16, [4]=8})[n]) )
+	self.size = matrix{n}:lambda([i] (({[2]=16, [3]=16, [4]=8})[n]) )
 
-	-- detail = how many extra steps between lattice points to emit lines
-	self.detail = matrix{n}:lambda([i] 10)
+	-- detail = how many extra steps between lattice points to emit lines ...
+	-- ... if I do this then should the metric be interpolated?  or should it be constant? should the filter method be chosen in the GUI?
+	--self.detail = matrix{n}:lambda([i] 10)
+
+	self.integrationMethods = table{
+		{['F.E.'] = int_fe},
+		{RK4 = int_rk4},
+	}
+	self.integrationMethod = 2
+
+	-- dynamically populate? I'd rather show all and grey out which ones the geometry doesn't support
+	self.propagationMethods = table{
+		'metric f.d.',
+		-- TODO a metric f.d. where we calculate the metric inverse analytically instead of numerically?
+		'connection',
+		'parallel propagator',
+		-- TODO P.P. inv also?  Mind you even in CFD the numerical inverse isn't numerically stable enough for FVS integrators ...
+	}
+	self.propagationMethod = 1
 
 --[[
 	self.domain = self.env:domain{size=self.size}
 --]]
 
-	self.xmin = self.geom and self.geom.xmin or matrix{n}:lambda([] -1)
-	self.xmax = self.geom and self.geom.xmax or matrix{n}:lambda([] 1)
+	self.xmin = geom and geom.xmin or matrix{n}:lambda([] -1)
+	self.xmax = geom and geom.xmax or matrix{n}:lambda([] 1)
 
 	self.view.ortho = n == 2
 
@@ -680,8 +724,8 @@ App.buildSurface = [:, geomName] do
 			n = n,
 			clnumber = clnumber,
 			size = self.size,
-			xmin = self.geom.xmin,
-			xmax = self.geom.xmax,
+			xmin = geom.xmin,
+			xmax = geom.xmax,
 		}),
 	}:concat'\n'
 
@@ -697,8 +741,8 @@ App.buildSurface = [:, geomName] do
 ?>]], {n = n}),
 	}()
 
-	if self.geom.createMetric
-	or self.geom.create_gs
+	if geom.createMetric
+	or geom.create_gs
 	then
 		self.gsBuf = self.domain:buffer{name='gs', type=self.rank2Type}
 		self.gUsBuf = self.domain:buffer{name='gUs', type=self.rank2Type}
@@ -712,7 +756,9 @@ App.rebuildSurface = [:] do
 print()
 print('App:rebuildSurface...')
 	local n = #self.size
+	local geom = self.geom
 
+	self.surfaceObj = nil
 
 	--[[ cell centered, including borders
 	self.dx = matrix{n}:ones():emul(self.xmax - self.xmin):ediv(self.size)
@@ -722,19 +768,44 @@ print('App:rebuildSurface...')
 	self.dx = matrix{n}:ones():emul(self.xmax - self.xmin):ediv(self.size-3)
 	self.xs = self.size:lambda([...] ((matrix{...} - 2):emul(self.dx) + self.xmin) )
 
+	local integrator = select(2, next(self.integrationMethods[self.integrationMethod]))
+	
+	-- e = basis matrix ... are rows or cols the basis forms? 
+	-- i = lattice index
+	-- k = which dimension we're moving along
+	-- dir = forward or backwards on the lattice
+	-- ... or i could waste cycles and do ...
+	-- ... x = coordinate location
+	-- ... dx = change-in-coordinate
+	local integrateBasis = [index, nextIndex, k, dir, connk, nextConnK, e, ds] do
+		return integrator(0, e, [s, e] do
+			-- NEAREST filter on connection:
+			--return e:T() * connk
+			-- LINEAR filter on connection:
+			local f = s / ds
+			return (nextConnK * f + connk * (1 - f)):T() * e
+			-- using analytical solution
+			--local x = self.xs[index]
+			--local xNext = self.xs[nextIndex]
+			--return geom.calc.Conn( (x * s + xNext * (ds - s)) / ds  )(_,k):T() * e
+		end, ds)
+	end
 
 	-- if we are calculating the connection from discrete derivatives of the metric ...
-	if self.geom.createMetric
-	or self.geom.create_gs
-	then
+	if self.propagationMethod == 1 then
+		if not (geom.createMetric or geom.create_gs) then
+			print('!!! WARNING !!! propagation method '..tostring(self.propagationMethods[self.propagationMethod])..' not provided by this geometry !!!')
+			return
+		end
+
 print('creating metric...')
 		local gs
-		if self.geom.create_gs then
+		if geom.create_gs then
 print('creating metric numerically...')
-			gs = self.geom:create_gs()
+			gs = geom:create_gs()
 		else
 print('creating metric analytically...')
-			gs = self.geom:calcFromEqns_gs()
+			gs = geom:calcFromEqns_gs()
 		end
 		--or self.size:lambda([...] matrix{n,n}:eye() )
 print('creating metric inverse numerically...')
@@ -758,6 +829,7 @@ print('creating connections numerically...')
 		self.conns = self.size:lambda([...] do
 			local i = matrix{...}
 			local dg = dgs[i]
+			-- TODO this assumes the metric is holonomic ... otherwise TODO we need the commutation coefficients
 			local numConnLower = matrix{n,n,n}:lambda([a,b,c] .5 * (dg[a][b][c] + dg[a][c][b] - dg[b][c][a]))
 			local gU = gUs[i]
 			local check1 = gU * numConnLower
@@ -781,22 +853,42 @@ print('creating connections numerically...')
 			return check2
 		end)
 
-		if self.geom and self.geom.create_conns then
+		if geom and geom.create_conns then
 print('*** comparing numeric to exact ***')
-			self.geom:testExact()
+			geom:testExact()
 		end
-	else
+
+	elseif self.propagationMethod == 2 then
+		if not geom.create_conns then
+			print('!!! WARNING !!! propagation method '..tostring(self.propagationMethods[self.propagationMethod])..' not provided by this geometry !!!')
+			return
+		end
+
 print('creating connections numerically...')
 		-- if calcFromEqns_gs isn't there, then rely on create_conns for providing the initial connections
-		self.conns = self.geom:create_conns()
+		self.conns = geom:create_conns()
+	elseif self.propagationMethod == 3 then
+		if not geom.parallelPropagatorInvs then
+			print('!!! WARNING !!! propagation method '..tostring(self.propagationMethods[self.propagationMethod])..' not provided by this geometry !!!')
+			return
+		end
+
+		integrateBasis = [index, nextIndex, k, dir, connk, nextConnK, e, ds] do
+			local eT = e:T()
+			local x = self.xs[index]
+			local prop = geom.parallelPropagatorInvs[k]
+			return matrix{n}:lambda([i] prop(eT[i], ds, x:unpack())):T()
+		end
 	end
 
 	-- embedded space position
 	self.Xs = self.size:lambda([...] matrix{n}:zeros())
+	
+	-- rows of es = components of the basis vectors in the embedded Cartesian space
 	self.es = self.size:lambda([...] matrix{n,n}:zeros())
 
-	local xInit = matrix(assert(self.geom.startCoord))
-	local i = ((xInit - self.geom.xmin):ediv(self.geom.xmax - self.geom.xmin):emul(self.size-3) + 2.5):map(math.floor)
+	local xInit = matrix(assert(geom.startCoord))
+	local i = ((xInit - geom.xmin):ediv(geom.xmax - geom.xmin):emul(self.size-3) + 2.5):map(math.floor)
 	for j=1,n do
 		if self.size[j] > 1 then
 			-- make sure we can finite-difference ... TODO this somewhere else, in the integration loop?
@@ -826,6 +918,7 @@ if not conn then error("failed to get conn at index "..tostring(index)) end
 		-- for each direction ...
 		local _ = matrix.index
 		for k=1,n do
+			-- TODO why not store the coordinate index first?
 			local connk = conn(_,_,k)
 
 			for dir=-1,1,2 do
@@ -841,8 +934,8 @@ if not conn then error("failed to get conn at index "..tostring(index)) end
 					-- technically I should be using commutation coefficients or something
 					-- or maybe this isn't cheating since we should be integrating by coordinate distances, which were normalized out in anholonomic basis ...
 					local len = 1
-					if self.geom.get_basis_lengths then
-						local lens = self.geom:get_basis_lengths(self.xs[index]:unpack())
+					if geom.get_basis_lengths then
+						local lens = geom:get_basis_lengths(self.xs[index]:unpack())
 						len = len * lens[k]
 					end
 
@@ -852,40 +945,25 @@ if not conn then error("failed to get conn at index "..tostring(index)) end
 					local eOrig = self.es[index]
 					local XOrig = self.Xs[index]
 
-					local e = matrix(eOrig)
-					local X = matrix(XOrig)
+					local e = eOrig:clone()
+					local X = XOrig:clone()
 
-					--[[ forward-euler
-					local integrator = int_fe
-					--]]
-					-- [[ rk4
-					local integrator = int_rk4
-					--]]
-					--[[ forward-euler ... using connk vs nextConnK ?
-					e = e + (e * connk) * ds
-					X = X + e(_,k) * ds
-					--]]
-					-- [[ rk4 ...
-					e = integrator(0, e, [s, e] do
-						-- treating connections as constant
-						--return e * connk
-						-- interpolating connections between cells
-						return e * (nextConnK * s + connk * (ds - s)) / ds
-						-- using analytical solution
-						--local x = self.xs[index]
-						--local xNext = self.xs[nextIndex]
-						--return e * self.geom.calc.Conn( (x * s + xNext * (ds - s)) / ds  )(_,k)
-					end, ds)
+				
+					-- TODO integrate both at the same time, e and X, for better accuracy ...
+
+					e = integrateBasis(index, nextIndex, k, dir, connk, nextConnK, e, ds)
+					
 					X = integrator(0, X, [s, X] do
 						local f = s / ds
 						-- constant:
 						--return eOrig(_,k)
 						-- linear interpolation
-						return e(_,k) * f + eOrig(_,k) * (1 - f)
+						return e[k] * f + eOrig[k] * (1 - f)
 					end, ds)
-					--]]
+					
 					--[[ matrix-exponent to calculate parallel-propagator numerically (instead of numerically integrating the connection)
 					-- TODO eigen-decompose and then exponent the eigenvalues ...
+					-- TODO this into the 'integrateBasis' as another of the propagationMethods
 					do
 						-- if d/ds e = conn e then ...
 						-- then we can solve this as a linear dynamic system!
@@ -897,7 +975,7 @@ if not conn then error("failed to get conn at index "..tostring(index)) end
 						-- 2D eigenvalues
 						-- (a-λ)(d-λ) - bc = 0 <=> λ^2 - (a+d) λ + (ad-bc) = 0 <=> λ = 1/2 ( (a+d) +- sqrt( a^2 + 2ad + d^2 - 4 (ad - bc) ) )
 						-- λ = (a+d)/2 +- sqrt( ((a-d)/2)^2 + bc ) )
-						--print('conn '..self.geom.coords[k]..':\n'..connk)
+						--print('conn '..geom.coords[k]..':\n'..connk)
 						local a,b = connk[1]:unpack()
 						local c,d = connk[2]:unpack()
 						local asym = (a - d) / 2
@@ -1009,12 +1087,10 @@ if not conn then error("failed to get conn at index "..tostring(index)) end
 					end
 					--]]
 
-					--[[ normalize columns
-					e = e:T()
+					--[[ normalize rows
 					for k=1,n do
 						e[k] = e[k] / e[k]:norm()
 					end
-					e = e:T()
 					--]]
 
 --[[
@@ -1073,7 +1149,6 @@ print('e='..e)
 -- [[
 	local sizeMinusOne = self.size-1
 	for indexMinusOne in sizeMinusOne:range() do
-print(indexMinusOne)
 		local index = indexMinusOne+1
 		for k=1,n do
 			if index[k] < sizeMinusOne[k] then
@@ -1243,9 +1318,11 @@ App.update = [:] do
 	end
 	lastTime = thisTime
 
-	self.surfaceObj.uniforms.t = .5 - .5 * math.cos(math.pi * gui.animTime)
-	self.surfaceObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
-	self.surfaceObj:draw()
+	if self.surfaceObj then
+		self.surfaceObj.uniforms.t = .5 - .5 * math.cos(math.pi * gui.animTime)
+		self.surfaceObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
+		self.surfaceObj:draw()
+	end
 
 --[[ draw the basis at every point?
 		local colors = matrix{
@@ -1262,7 +1339,7 @@ App.update = [:] do
 		for indexMinusOne in sizeMinusOne:range() do
 			local index = indexMinusOne+1
 			local u = self.Xs[index]
-			local e = self.es[index]:T()
+			local e = self.es[index]
 			for k=1,n do
 				glColor3f(colors[k])
 				glVertex(u)
@@ -1313,6 +1390,23 @@ App.updateGUI = [:] do
 
 		if ig.luatableTooltipCombo('coordinate system', self, 'geomID', geomClassNames) then
 			self:buildSurface(geomClassNames[self.geomID])
+		end
+
+		ig.igText'integration method:'
+		for i,info in ipairs(self.integrationMethods) do
+			local name, func = next(info)
+			if ig.luatableRadioButton(name, self, 'integrationMethod', i)
+			then
+				self:rebuildSurface()
+			end
+		end
+
+		ig.igText'propagation method:'
+		for i,name in ipairs(self.propagationMethods) do
+			if ig.luatableRadioButton(name, self, 'propagationMethod', i)
+			then
+				self:rebuildSurface()
+			end
 		end
 
 		local n = #self.size
