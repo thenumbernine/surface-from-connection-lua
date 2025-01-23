@@ -213,18 +213,21 @@ Polar.create_conns = [:]
 -- propagator inverse, i.e. propagator of one-forms, since we are propagating our basis' coefficients in the embedded Cartesian basis, which is a one-form
 Polar.parallelPropagatorInvs = {
 	-- propagating along r ...
-	([w, dr, r, phi] do
+	([dr, r, phi] do
 		local rL = r
 		local rR = r + dr
-		return matrix{w[1], w[2] * rR / rL}
+		return matrix{
+			{1, 0},
+			{0, rR / rL}
+		}
 	end),
 	-- propagating along φ ...
-	([w, dphi, r, phi] do
+	([dphi, r, phi] do
 		local cos_dphi = math.cos(dphi)
 		local sin_dphi = math.sin(dphi)
 		return matrix{
-			w[1] * cos_dphi - r * w[2] * sin_dphi,
-			w[1] * sin_dphi / r + w[2] * cos_dphi
+			{cos_dphi, -r * sin_dphi},
+			{sin_dphi / r, cos_dphi}
 		}
 	end),
 }
@@ -665,6 +668,14 @@ App.buildSurface = [:, geomName] do
 	-- ... if I do this then should the metric be interpolated?  or should it be constant? should the filter method be chosen in the GUI?
 	--self.detail = matrix{n}:lambda([i] 10)
 
+	self.filterMethods = table{
+		'nearest',
+		'linear',
+	}
+
+	self.basisFilterMethod = 2		-- filter of conn lookup when integrating e's
+	self.posFilterMethod = 2	-- filter of e lookup when integrating x's
+
 	self.integrationMethods = table{
 		{['F.E.'] = int_fe},
 		{RK4 = int_rk4},
@@ -782,7 +793,10 @@ print('App:rebuildSurface...')
 			-- NEAREST filter on connection:
 			--return e:T() * connk
 			-- LINEAR filter on connection:
-			local f = s / ds
+			local f = 0
+			if self.basisFilterMethod == 2 then
+				f = s / ds
+			end
 			return (nextConnK * f + connk * (1 - f)):T() * e
 			-- using analytical solution
 			--local x = self.xs[index]
@@ -874,10 +888,8 @@ print('creating connections numerically...')
 		end
 
 		integrateBasis = [index, nextIndex, k, dir, connk, nextConnK, e, ds] do
-			local eT = e:T()
-			local x = self.xs[index]
 			local prop = geom.parallelPropagatorInvs[k]
-			return matrix{n}:lambda([i] prop(eT[i], ds, x:unpack())):T()
+			return matrix{n}:lambda([i] prop(ds, self.xs[index]:unpack()):T() * e[i])
 		end
 	end
 
@@ -954,7 +966,11 @@ if not conn then error("failed to get conn at index "..tostring(index)) end
 					e = integrateBasis(index, nextIndex, k, dir, connk, nextConnK, e, ds)
 					
 					X = integrator(0, X, [s, X] do
-						local f = s / ds
+						local f = 0
+						if self.posFilterMethod == 2 then
+							f = s / ds
+						end
+						
 						-- constant:
 						--return eOrig(_,k)
 						-- linear interpolation
@@ -1392,22 +1408,35 @@ App.updateGUI = [:] do
 			self:buildSurface(geomClassNames[self.geomID])
 		end
 
-		ig.igText'integration method:'
-		for i,info in ipairs(self.integrationMethods) do
-			local name, func = next(info)
-			if ig.luatableRadioButton(name, self, 'integrationMethod', i)
-			then
-				self:rebuildSurface()
+		for _,field in ipairs{'basisFilterMethod', 'posFilterMethod'} do
+			ig.igPushID_Str(field)
+			ig.igText(field..':')
+			for i,name in ipairs(self.filterMethods) do
+				if ig.luatableRadioButton(name, self, field, i) then
+					self:rebuildSurface()
+				end
 			end
+			ig.igPopID()
 		end
 
-		ig.igText'propagation method:'
-		for i,name in ipairs(self.propagationMethods) do
-			if ig.luatableRadioButton(name, self, 'propagationMethod', i)
-			then
+		ig.igText'integration method:'
+		ig.igPushID_Str'integration method'
+		for i,info in ipairs(self.integrationMethods) do
+			local name, func = next(info)
+			if ig.luatableRadioButton(name, self, 'integrationMethod', i) then
 				self:rebuildSurface()
 			end
 		end
+		ig.igPopID()
+
+		ig.igText'propagation method:'
+		ig.igPushID_Str'propagation method'
+		for i,name in ipairs(self.propagationMethods) do
+			if ig.luatableRadioButton(name, self, 'propagationMethod', i) then
+				self:rebuildSurface()
+			end
+		end
+		ig.igPopID()
 
 		local n = #self.size
 		for _,field in ipairs{'xmin', 'xmax', 'startCoord'} do
