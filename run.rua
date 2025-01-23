@@ -1,7 +1,4 @@
-#! /usr/bin/env luajit
-local math = require 'ext.math'
-local class = require 'ext.class'
-local table = require 'ext.table'
+#! /usr/bin/env rua
 local ig = require 'imgui'
 local gl = require 'gl'
 local matrix = require 'matrix'
@@ -15,11 +12,10 @@ local GLSceneObject = require 'gl.sceneobject'
 local CLEnv = require 'cl.obj.env'
 --]]
 
-local function int_fe(t, y, dy_dt, dt)
-	return y + dy_dt(t, y) * dt, t + dt
-end
+local int_fe = [t, y, dy_dt, dt] 
+	(y + dy_dt(t, y) * dt, t + dt)
 
-local function int_rk4(t, y, dy_dt, dt)
+local int_rk4 = [t, y, dy_dt, dt] do
 	local k1 = dy_dt(t, y)
 	local k2 = dy_dt(t + .5 * dt, y + .5 * dt * k1)
 	local k3 = dy_dt(t + .5 * dt, y + .5 * dt * k2)
@@ -27,7 +23,7 @@ local function int_rk4(t, y, dy_dt, dt)
 	return y + (k1 + 2 * k2 + 2 * k3 + k4) * dt / 6, t + dt
 end
 
-function matrix:isfinite()
+matrix.isfinite = [:] do
 	for i in self:iter() do
 		if not math.isfinite(self[i]) then return false end
 	end
@@ -45,13 +41,13 @@ local surfaceBuildOrder = 'last'
 -- and verifying accuracy of numerical calculations
 local Geometry = class()
 
-function Geometry:init(app)
+Geometry.init = [:, app] do
 	self.app = app
 	self.xmin = matrix(self.xmin)
 	self.xmax = matrix(self.xmax)
 	self.startCoord = matrix(self.startCoord)
 
-	self.coordVars = table.map(self.coords, function(name)
+	self.coordVars = table.map(self.coords, [name] do
 		local var = symmath.var(name)
 		for _,p in ipairs(require 'symmath.tensor.symbols'.greekSymbolsAndNames) do
 			local k,v = next(p)
@@ -77,31 +73,29 @@ function Geometry:init(app)
 	end
 end
 
-function Geometry:testExact()
+Geometry.testExact = [:] do
 	local app = self.app
 	local exactConns = self:calcFromEqns_conns()
-	local connNumConnDiff = app.size:lambda(function(i,j)
-		return (app.conns[i][j] - exactConns[i][j]):norm()
-	end)
+	local connNumConnDiff = app.size:lambda([i,j] ((app.conns[i][j] - exactConns[i][j]):norm()))
 
 	local x,y,z
 
 	if app.size[1] == 1 then
-		x = matrix{1}:lambda(function(i) return app.xs[1][1][1] end)
+		x = matrix{1}:lambda([i] app.xs[1][1][1])
 	else
-		x = matrix{app.size[1]-2}:lambda(function(i) return app.xs[i+1][1][1] end)
+		x = matrix{app.size[1]-2}:lambda([i] app.xs[i+1][1][1])
 	end
 
 	if app.size[2] == 1 then
-		y = matrix{1}:lambda(function(j) return app.xs[1][1][2] end)	-- TODO why the 2 in the z?
+		y = matrix{1}:lambda([j] app.xs[1][1][2])	-- TODO why the 2 in the z?
 	else
-		y = matrix{app.size[2]-2}:lambda(function(j) return app.xs[1][j+1][2] end)
+		y = matrix{app.size[2]-2}:lambda([j] app.xs[1][j+1][2])
 	end
 
 	local zrange = app.size - 2
 	zrange[1] = math.max(zrange[1], 1)
 	zrange[2] = math.max(zrange[2], 1)
-	z = zrange:lambda(function(i,j)
+	z = zrange:lambda([i,j] do
 		local iR = zrange[1] == 1 and i or i+1
 		local jR = zrange[2] == 1 and j or j+1
 		return connNumConnDiff[iR][jR]
@@ -120,33 +114,20 @@ function Geometry:testExact()
 	print('max Γ^a_bc |analytic - numeric|', z:normLInf())
 end
 
-function Geometry:compileTensor(expr)
+Geometry.compileTensor = [:, expr] do
 	local size = expr:dim()
-	local fs = matrix(size):lambda(function(...)
-		return expr[{...}]:compile(self.coordVars)
-	end)
-	return function(x)
-		return matrix(size):lambda(function(...)
-			return fs[{...}]( table.unpack(x) )
-		end)
-	end
+	local fs = matrix(size):lambda([...] expr[{...}]:compile(self.coordVars))
+	return [x] matrix(size):lambda([...] fs[{...}](table.unpack(x)))
 end
 
-function Geometry:calcFromEqns_gs()
+Geometry.calcFromEqns_gs = [:] do
 	if not self.calc.g then return end
 	local app = self.app
-	return app.size:lambda(function(...)
-		return self.calc.g(self.app.xs[{...}])
-	end)
+	return app.size:lambda([...] self.calc.g(self.app.xs[{...}]))
 end
 
 -- this is only used for comparing the error between the numerical and the exact connections
-function Geometry:calcFromEqns_conns()
-	if not self.calc.Conn then return end
-	return self.app.size:lambda(function(...)
-		return self.calc.Conn(self.app.xs[{...}])
-	end)
-end
+Geometry.calcFromEqns_conns = [:] self.calc.Conn and self.app.size:lambda([...] self.calc.Conn(self.app.xs[{...}])) or nil
 
 
 --[[
@@ -164,6 +145,13 @@ what each geometry subclass needs:
 
 -- 2D geometries
 
+
+local Cartesian2D = Geometry:subclass()
+Cartesian2D.coords = {'x', 'y'}
+Cartesian2D.xmin = matrix{-1, -1}
+Cartesian2D.xmax = matrix{1, 1}
+Cartesian2D.startCoord = {0, 0}
+Cartesian2D.create_conns = [:] self.app.size:lambda([...] matrix{2,2,2}:zeros())
 
 local Polar = Geometry:subclass()
 Polar.coords = {'r', 'θ'}
@@ -188,7 +176,7 @@ Polar.xmax = matrix{2, 2 * math.pi}
 Polar.startCoord = {.5,0}
 --]]
 -- [[ analytically
-function Polar:createMetric()
+Polar.createMetric = [:] do
 	local r, theta = self.coordVars:unpack()
 	return symmath.Tensor('_ab', {1, 0}, {0, r^2})
 end
@@ -196,8 +184,8 @@ end
 
 -- [[ purely numerically
 -- ... if this and create_gs/createMetric is enabled then this is only used to calculate numerical error of connections
-function Polar:create_conns()
-	return self.app.size:lambda(function(...)
+Polar.create_conns = [:] 
+	self.app.size:lambda([...] do
 		local x = self.app.xs[{...}]
 		local r, theta = x:unpack()
 		-- 1/Γ^θ_θr = 1/Γ^θ_rθ = -Γ^r_θθ = r
@@ -212,7 +200,6 @@ function Polar:create_conns()
 			},
 		}
 	end)
-end
 --]]
 
 
@@ -226,17 +213,14 @@ PolarAnholonomic.coords = {'r', 'θ'}
 PolarAnholonomic.xmin = matrix{1, 0}
 PolarAnholonomic.xmax = matrix{10, 2 * math.pi}
 PolarAnholonomic.startCoord = {1,0}
-function PolarAnholonomic:create_conns()
-	return self.app.size:lambda(function(i,j)
+PolarAnholonomic.create_conns = [:] 
+	self.app.size:lambda([i,j] do
 		local r = self.app.xs[i][j][1]
 		-- Γ^θ_rθ = -Γ^r_θθ = 1/r
 		return matrix{ {{0,0},{0,-1/r}}, {{0,1/r},{0,0}} }
 	end)
-end
 -- if you can get the lengths holonomic basis' vectors then reconstructing the original shape is much easier
-function PolarAnholonomic:get_basis_lengths(r, theta)
-	return matrix{1, r}
-end
+PolarAnholonomic.get_basis_lengths = [:, r, theta] matrix{1, r}
 
 
 -- cyl surface can't be reconstructed
@@ -256,7 +240,7 @@ SphereSurface.startCoord = {math.pi/2, math.pi}	-- poles along x axis
 --SphereSurface.startCoord = {math.pi/4, math.pi}
 --SphereSurface.startCoord = {math.pi/2, 2*eps}		-- mostly y>0
 --SphereSurface.startCoord = {math.pi/2, math.pi*2-2*eps}	-- mostly y<0
-function SphereSurface:createMetric()
+SphereSurface.createMetric = [:] do
 	local theta, phi = self.coordVars:unpack()
 	local r = 1
 	return symmath.Tensor('_ab', {r^2, 0}, {0, r^2 * symmath.sin(theta)^2})
@@ -268,7 +252,7 @@ TorusSurface.coords = {'θ', 'φ'}
 TorusSurface.xmin = {-math.pi, -math.pi}
 TorusSurface.xmax = {math.pi, math.pi}
 TorusSurface.startCoord = {0, 0}
-function TorusSurface:createMetric()
+TorusSurface.createMetric = [:] do
 	local theta, phi = self.coordVars:unpack()
 	local r = 2
 	local R = 5
@@ -280,7 +264,7 @@ PoincareDisk2D.coords = {'u', 'v'}
 PoincareDisk2D.xmin = {-1, -1}
 PoincareDisk2D.xmax = {1, 1}
 PoincareDisk2D.startCoord = {0, 0}
-function PoincareDisk2D:createMetric()
+PoincareDisk2D.createMetric = [:] do
 	local u, v = self.coordVars:unpack()
 	return symmath.Tensor('_ab', {4 / (1 - u^2 - v^2), 0}, {0, 4 / (1 - u^2 - v^2)})
 end
@@ -292,9 +276,7 @@ Minkowski2D.coords = {'t', 'x'}
 Minkowski2D.xmin = {-1, -1}
 Minkowski2D.xmax = {1, 1}
 Minkowski2D.startCoord = {0,0}
-function Minkowski2D:createMetric()
-	return symmath.Tensor('_ab', {-1, 0}, {0, 1})
-end
+Minkowski2D.createMetric = [:] symmath.Tensor('_ab', {-1, 0}, {0, 1})
 
 
 -- here's Schwarzschild in time and in radial
@@ -304,7 +286,7 @@ Schwarzschild1Plus1.coords = {'r', 't'}
 Schwarzschild1Plus1.xmin = {-2, -2}
 Schwarzschild1Plus1.xmax = {2, 2}
 Schwarzschild1Plus1.startCoord = {2, 0}
-function Schwarzschild1Plus1:createMetric()
+Schwarzschild1Plus1.createMetric = [:] do
 	local r, t = self.coordVars:unpack()
 	local mass = .1
 	return symmath.Tensor('_ab', {1/(1 - 2 * mass / r), 0}, {0, 1 - 2 * mass / r})
@@ -320,8 +302,8 @@ Schwarzschild1Plus1EOS.coords = {'r', 't'}
 Schwarzschild1Plus1EOS.xmin = {-2, -2}
 Schwarzschild1Plus1EOS.xmax = {2, 2}
 Schwarzschild1Plus1EOS.startCoord = {2, 0}
-function Schwarzschild1Plus1EOS:create_gs()
-	return self.app.size:lambda(function(...)
+Schwarzschild1Plus1EOS.create_gs = [:] 
+	self.app.size:lambda([...] do
 		local r, t = self.app.xs[{...}]:unpack()
 		local mass = .1
 		local radius = 1
@@ -332,7 +314,6 @@ function Schwarzschild1Plus1EOS:create_gs()
 			{0, 1 - 2 * massWithinRadius / r},
 		}
 	end)
-end
 
 -- here's one from section 2.5 of the "Covariant Loop Quantum Gravity" book
 local LagrangianTotalEnergy = Geometry:subclass()
@@ -340,14 +321,13 @@ LagrangianTotalEnergy.coords = {'a', 'b'}
 LagrangianTotalEnergy.xmin = {-2, -2}
 LagrangianTotalEnergy.xmax = {2, 2}
 LagrangianTotalEnergy.startCoord = {0, 0}
-function LagrangianTotalEnergy:create_gs()
-	return self.app.size:lambda(function(...)
+LagrangianTotalEnergy.create_gs = [:] 
+	self.app.size:lambda([...] do
 		local a, b = self.app.xs[{...}]:unpack()
 		local E = 10
 		local r = 2 * E - a^2 - b^2
 		return matrix{{r, 0}, {0, r}}
 	end)
-end
 
 
 -- 3D geometries
@@ -358,7 +338,7 @@ Cylinder.coords = {'r', 'θ', 'z'}
 Cylinder.xmin = {1, 0, -5}
 Cylinder.xmax = {10, 2*math.pi, 5}
 Cylinder.startCoord = {1,math.pi,0}
-function Cylinder:createMetric()
+Cylinder.createMetric = [:] do
 	local r, theta, z = self.coordVars:unpack()
 	return symmath.Tensor('_ab', {1, 0, 0}, {0, r^2, 0}, {0, 0, 1})
 end
@@ -374,21 +354,26 @@ Sphere.startCoord = {1, math.pi/2, 0}
 --Sphere.startCoord = {2, math.pi/2, 0}	-- squashed to an ellipsoid, just like the polar case
 --Sphere.startCoord = {1, math.pi/2, math.pi-2*eps}	-- changing phi_0 doesn't affect it at all though
 --Sphere.startCoord = {2, math.pi/2, math.pi-2*eps}	-- ... though it does a tiny bit (makes some waves in the coordinate system) if r_0 is not 1
-function Sphere:createMetric()
+Sphere.createMetric = [:] do
 	local r, theta, phi = self.coordVars:unpack()
 	return symmath.Tensor('_ab', {1,0,0}, {0, r^2, 0}, {0, 0, r^2 * symmath.sin(theta)^2})
 end
 
 
+-- TODO I'm betting x0 or e0 is off.  btw there's no way to customize e0(x0) ... 
 local Torus = Geometry:subclass()
 Torus.coords = {'r', 'θ', 'φ'}
 Torus.xmin = {1, -math.pi, -math.pi}
 Torus.xmax = {2, math.pi, math.pi}
 Torus.startCoord = {1, -math.pi, -math.pi}
-function Torus:createMetric()
+Torus.createMetric = [:] do
 	local r, theta, phi = self.coordVars:unpack()
 	local R = 5
-	return symmath.Tensor('_ab', {1, 0, 0}, {0, r^2, 0}, {0, 0, (R + r * symmath.sin(theta))^2})	-- does sin(theta) work as well?
+	return symmath.Tensor('_ab',
+		{1, 0, 0},
+		{0, r^2, 0},
+		{0, 0, (R + r * symmath.sin(theta))^2}	-- does sin(theta) work as well?
+	)
 end
 
 
@@ -397,7 +382,7 @@ PoincareDisk3D.coords = {'u', 'v', 'w'}
 PoincareDisk3D.xmin = {-1, -1, -1}
 PoincareDisk3D.xmax = {1, 1, 1}
 PoincareDisk3D.startCoord = {0, 0, 0}
-function PoincareDisk3D:createMetric()
+PoincareDisk3D.createMetric = [:] do
 	local u, v, w = self.coordVars:unpack()
 	return symmath.Tensor('_ab', {4 / (1 - u^2 - v^2 - w^2), 0, 0}, {0, 4 / (1 - u^2 - v^2 - w^2), 0}, {0, 0, 4 / (1 - u^2 - v^2 - w^2)})
 end
@@ -414,8 +399,8 @@ Schwarzschild2Plus1EOS.xmin = {-2, -2, -2}
 Schwarzschild2Plus1EOS.xmax = {2, 2, 2}
 --Schwarzschild2Plus1EOS.startCoord = {0, 2, 2}
 Schwarzschild2Plus1EOS.startCoord = {0, 0, 0}
-function Schwarzschild2Plus1EOS:create_gs()
-	return self.app.size:lambda(function(...)
+Schwarzschild2Plus1EOS.create_gs = [:] 
+	self.app.size:lambda([...] do
 		local t, x, y = self.app.xs[{...}]:unpack()
 		local mass = .05
 		local radius = 1
@@ -428,7 +413,6 @@ function Schwarzschild2Plus1EOS:create_gs()
 			{0, 0, 1/(1 - 2 * massWithinRadius / r)},
 		}
 	end)
-end
 
 
 local SchwarzschildSphere2Plus1EOS = Geometry:subclass()
@@ -436,8 +420,8 @@ SchwarzschildSphere2Plus1EOS.coords = {'t', 'r', 'φ'}
 SchwarzschildSphere2Plus1EOS.xmin = {-2, .1, -math.pi}
 SchwarzschildSphere2Plus1EOS.xmax = {2, 2, math.pi}
 SchwarzschildSphere2Plus1EOS.startCoord = {0, 1, 0}
-function SchwarzschildSphere2Plus1EOS:create_gs()
-	return self.app.size:lambda(function(...)
+SchwarzschildSphere2Plus1EOS.create_gs = [:] 
+	self.app.size:lambda([...] do
 		local t, r, phi = self.app.xs[{...}]:unpack()
 		local mass = .05
 		local radius = 1
@@ -449,7 +433,6 @@ function SchwarzschildSphere2Plus1EOS:create_gs()
 			{0, 0, r*r},
 		}
 	end)
-end
 
 
 
@@ -460,19 +443,19 @@ UniformElectricFieldNumericIn2Plus1D.coords = {'t', 'x', 'y'}		-- ut oh, now we 
 UniformElectricFieldNumericIn2Plus1D.xmin = {-1, -1, -1}
 UniformElectricFieldNumericIn2Plus1D.xmax = {1, 1, 1}
 UniformElectricFieldNumericIn2Plus1D.startCoord = {0, 0, 0}
-function UniformElectricFieldNumericIn2Plus1D:create_conns()
-	local E = 1
-	return self.app.size:lambda(function(...)
-		return matrix{
+UniformElectricFieldNumericIn2Plus1D.create_conns = [:] do
+	local E_over_sqrt_2 = 1
+	return self.app.size:lambda([...] 
+		matrix{
 			{
-				{0,E,0},
-				{E,0,0},
+				{0,E_over_sqrt_2,0},
+				{E_over_sqrt_2,0,0},
 				{0,0,0},
 			},
 			{
-				{-E,0,0},
+				{-E_over_sqrt_2,0,0},
 				{0,0,0},
-				{0,0,E},
+				{0,0,E_over_sqrt_2},
 			},
 			{
 				{0,0,0},
@@ -480,7 +463,7 @@ function UniformElectricFieldNumericIn2Plus1D:create_conns()
 				{0,0,0},
 			},
 		}
-	end)
+	)
 end
 
 
@@ -491,21 +474,21 @@ UniformElectricFieldNumeric.coords = {'t', 'x', 'y', 'z'}		-- ut oh, now we intr
 UniformElectricFieldNumeric.xmin = {-1, -1, -1}
 UniformElectricFieldNumeric.xmax = {1, 1, 1}
 UniformElectricFieldNumeric.startCoord = {0, 0, 0}
-function UniformElectricFieldNumeric:create_conns()
-	local E = 1
-	return self.app.size:lambda(function(...)
-		return matrix{
+UniformElectricFieldNumeric.create_conns = [:] do
+	local E_over_sqrt_2 = 1
+	return self.app.size:lambda([...]
+		matrix{
 			{
-				{0,E,0,0},
-				{E,0,0,0},
+				{0,E_over_sqrt_2,0,0},
+				{E_over_sqrt_2,0,0,0},
 				{0,0,0,0},
 				{0,0,0,0},
 			},
 			{
-				{-E,0,0,0},
+				{-E_over_sqrt_2,0,0,0},
 				{0,0,0,0},
-				{0,0,E,0},
-				{0,0,0,E},
+				{0,0,E_over_sqrt_2,0},
+				{0,0,0,E_over_sqrt_2},
 			},
 			{
 				{0,0,0,0},
@@ -514,7 +497,7 @@ function UniformElectricFieldNumeric:create_conns()
 				{0,0,0,0},
 			},
 		}
-	end)
+	)
 end
 
 -- Here's connections that give rise to the stress-energy for the magnetic field
@@ -527,9 +510,9 @@ InfiniteWireMagneticFieldNumeric.coords = {'t', 'r', 'φ', 'z'}
 InfiniteWireMagneticFieldNumeric.xmin = {-1, -1, -math.pi, -1}
 InfiniteWireMagneticFieldNumeric.xmax = {1, 1, math.pi, 1}
 InfiniteWireMagneticFieldNumeric.startCoord = {0, 0, 0, 0}
-function InfiniteWireMagneticFieldNumeric:create_conns()
+InfiniteWireMagneticFieldNumeric.create_conns = [:] do
 	local I = 1
-	return self.app.size:lambda(function(...)
+	return self.app.size:lambda([...] do
 		local t, r, phi, z = self.app.xs[{...}]:unpack()
 		return matrix{
 			{
@@ -561,18 +544,13 @@ function InfiniteWireMagneticFieldNumeric:create_conns()
 end
 
 
-local function I(x)
-	return function()
-		return x
-	end
-end
-
+local I = [x] [] x
 
 local App = require 'imguiapp.withorbit'()
 App.title = 'reconstruct surface from geodesics'
 App.viewDist = 10
 
-function App:initGL()
+App.initGL = [:] do
 	App.super.initGL(self)
 	gl.glEnable(gl.GL_DEPTH_TEST)
 
@@ -615,6 +593,7 @@ end
 
 local geomClassesForName = table{
 	-- 2D
+	{Cartesian2D = Cartesian2D},
 	{Polar = Polar},
 	{PolarAnholonomic = PolarAnholonomic},
 	{SphereSurface = SphereSurface},
@@ -636,13 +615,11 @@ local geomClassesForName = table{
 --	{UniformElectricFieldNumeric = UniformElectricFieldNumeric},	-- crashing
 	{InfiniteWireMagneticFieldNumeric = InfiniteWireMagneticFieldNumeric},
 }
-local geomClassNames = geomClassesForName:map(function(kv) return (next(kv)) end)
+local geomClassNames = geomClassesForName:map([kv] ((next(kv))) )
 
-function App:buildSurface(geomName)
+App.buildSurface = [:, geomName] do
 	assert(geomName)
-	local loc, geomClass = geomClassesForName:find(nil, function(kv)
-		return next(kv) == geomName
-	end)
+	local loc, geomClass = geomClassesForName:find(nil, [kv] next(kv) == geomName)
 	assert(geomClass, "couldn't find geometry named "..geomName)
 	geomClass = assert(select(2, next(geomClass)))
 	self.geomID = loc
@@ -727,7 +704,7 @@ function App:buildSurface(geomName)
 	self:rebuildSurface()
 end
 
-function App:rebuildSurface()
+App.rebuildSurface = [:] do
 print()
 print('App:rebuildSurface...')
 	local n = #self.size
@@ -735,11 +712,11 @@ print('App:rebuildSurface...')
 
 	--[[ cell centered, including borders
 	self.dx = matrix{n}:ones():emul(self.xmax - self.xmin):ediv(self.size)
-	self.xs = self.size:lambda(function(...) return (matrix{...} - .5):emul(self.dx) + self.xmin end)
+	self.xs = self.size:lambda([...] ((matrix{...} - .5):emul(self.dx) + self.xmin) )
 	--]]
 	-- [[ vertex centered, excluding borders, so position 2,2 is at xmin (useful for centering the corner vertex)
 	self.dx = matrix{n}:ones():emul(self.xmax - self.xmin):ediv(self.size-3)
-	self.xs = self.size:lambda(function(...) return (matrix{...} - 2):emul(self.dx) + self.xmin end)
+	self.xs = self.size:lambda([...] ((matrix{...} - 2):emul(self.dx) + self.xmin) )
 
 
 	-- if we are calculating the connection from discrete derivatives of the metric ...
@@ -755,16 +732,14 @@ print('creating metric numerically...')
 print('creating metric analytically...')
 			gs = self.geom:calcFromEqns_gs()
 		end
-		--or self.size:lambda(function(...) return matrix{n,n}:eye() end)
+		--or self.size:lambda([...] matrix{n,n}:eye() )
 print('creating metric inverse numerically...')
-		local gUs = self.size:lambda(function(...)
-			return gs[{...}]:inv()
-		end)
+		local gUs = self.size:lambda([...] gs[{...}]:inv())
 print('creating metric derivatives numerically...')
-		local dgs = self.size:lambda(function(...)
+		local dgs = self.size:lambda([...] do
 			local i = matrix{...}
 			-- dg_abc = dg_bc/dx^a
-			local dg = matrix{n}:lambda(function(a)
+			local dg = matrix{n}:lambda([a] do
 				-- using a constant border
 				local ip = matrix(i) ip[a] = math.min(ip[a]+1, self.size[a])
 				local im = matrix(i) im[a] = math.max(im[a]-1, 1)
@@ -772,19 +747,17 @@ print('creating metric derivatives numerically...')
 				return (gs[ip] - gs[im]) / (self.xs[ip][a] - self.xs[im][a])
 			end)
 			-- reshape dg_abc = g_ab,c
-			return matrix{n,n,n}:lambda(function(a,b,c) return dg[c][a][b] end)
+			return matrix{n,n,n}:lambda([a,b,c] dg[c][a][b])
 		end)
 
 print('creating connections numerically...')
-		self.conns = self.size:lambda(function(...)
+		self.conns = self.size:lambda([...] do
 			local i = matrix{...}
 			local dg = dgs[i]
-			local numConnLower = matrix{n,n,n}:lambda(function(a,b,c)
-				return .5 * (dg[a][b][c] + dg[a][c][b] - dg[b][c][a])
-			end)
+			local numConnLower = matrix{n,n,n}:lambda([a,b,c] .5 * (dg[a][b][c] + dg[a][c][b] - dg[b][c][a]))
 			local gU = gUs[i]
 			local check1 = gU * numConnLower
-			local check2 = matrix{n,n,n}:lambda(function(a,b,c)
+			local check2 = matrix{n,n,n}:lambda([a,b,c] do
 				local s = 0
 				for d=1,n do
 					s = s + gU[a][d] * numConnLower[d][b][c]
@@ -815,12 +788,8 @@ print('creating connections numerically...')
 	end
 
 	-- embedded space position
-	self.Xs = self.size:lambda(function(...)
-		return matrix{n}:zeros()
-	end)
-	self.es = self.size:lambda(function(...)
-		return matrix{n,n}:zeros()
-	end)
+	self.Xs = self.size:lambda([...] matrix{n}:zeros())
+	self.es = self.size:lambda([...] matrix{n,n}:zeros())
 
 	local xInit = matrix(assert(self.geom.startCoord))
 	local i = ((xInit - self.geom.xmin):ediv(self.geom.xmax - self.geom.xmin):emul(self.size-3) + 2.5):map(math.floor)
@@ -834,7 +803,7 @@ print('creating connections numerically...')
 		-- TODO reset the start coord in the GUI if it has to be clamped
 	end
 	self.es[i] = self.e0:clone()	--matrix{n,n}:eye()
-	local function withinEdge(index,size)
+	local withinEdge = [index,size] do
 		for i=1,n do
 			if index[i] <= 1 or index[i] >= size[i] then return false end
 		end
@@ -893,7 +862,7 @@ if not conn then error("failed to get conn at index "..tostring(index)) end
 					X = X + e(_,k) * ds
 					--]]
 					-- [[ rk4 ...
-					e = integrator(0, e, function(s, e)
+					e = integrator(0, e, [s, e] do
 						-- treating connections as constant
 						--return e * connk
 						-- interpolating connections between cells
@@ -903,7 +872,7 @@ if not conn then error("failed to get conn at index "..tostring(index)) end
 						--local xNext = self.xs[nextIndex]
 						--return e * self.geom.calc.Conn( (x * s + xNext * (ds - s)) / ds  )(_,k)
 					end, ds)
-					X = integrator(0, X, function(s, X)
+					X = integrator(0, X, [s, X] do
 						local f = s / ds
 						-- constant:
 						--return eOrig(_,k)
@@ -939,7 +908,7 @@ if not conn then error("failed to get conn at index "..tostring(index)) end
 								local l1, l2 = a + sd, a - sd
 								local evR = matrix{{1, 1}, {math.sqrt(c/b), -math.sqrt(c/b)}}
 								local evL = matrix{{1, math.sqrt(b/c)}, {1, -math.sqrt(b/c)}} / 2
-								de = function(ds)
+								de = [ds] do
 									return evR * matrix{
 										{math.exp(ds * l1), 0},
 										{0, math.exp(ds * l2)}
@@ -949,7 +918,7 @@ if not conn then error("failed to get conn at index "..tostring(index)) end
 								-- b c < = means either b or c < 0 but not both
 								local theta = math.sqrt(-b * c)
 								local ratio = math.sqrt(-b / c)
-								de = function(ds)
+								de = [ds] do
 									local costh = math.cos(theta * ds)
 									local sinth = math.sin(theta * ds)
 									return matrix{
@@ -969,7 +938,7 @@ if not conn then error("failed to get conn at index "..tostring(index)) end
 							local l1, l2 = a, d
 							local evR = matrix{{1,0},{0,1}}
 							local evL = matrix(evR)
-							de = function(ds)
+							de = [ds] do
 								return evR * matrix{
 									{math.exp(ds * l1), 0},
 									{0, math.exp(ds * l2)}
@@ -981,7 +950,7 @@ if not conn then error("failed to get conn at index "..tostring(index)) end
 							local l1, l2 = a, d
 							local evR = matrix{{1, 0}, {b, d-a}}:T()
 							local evL = matrix{{1, b/(a-d)}, {0, -1/(a-d)}}
-							de = function(ds)
+							de = [ds] do
 								return evR * matrix{
 									{math.exp(ds * l1), 0},
 									{0, math.exp(ds * l2)}
@@ -993,7 +962,7 @@ if not conn then error("failed to get conn at index "..tostring(index)) end
 							local l1, l2 = a, d
 							local evR = matrix{{a-d, c}, {0, 1}}:T()
 							local evL = matrix{{1/(a-d), 0}, {-c/(a-d), 1}}
-							de = function(ds)
+							de = [ds] do
 								return evR * matrix{
 									{math.exp(ds * l1), 0},
 									{0, math.exp(ds * l2)}
@@ -1021,7 +990,7 @@ if not conn then error("failed to get conn at index "..tostring(index)) end
 								{-1, (asym + sd)/c},
 								{1, (-asym + sd)/c},
 							} / (2 * sd)
-							de = function(ds)
+							de = [ds] do
 								return evR * matrix{
 									{math.exp(ds * l1), 0},
 									{0, math.exp(ds * l2)}
@@ -1031,7 +1000,7 @@ if not conn then error("failed to get conn at index "..tostring(index)) end
 							error"here"
 						end
 
-						X = int_rk4(0, X, function(s) return (e * de(s))(_,k) end, ds)
+						X = int_rk4(0, X, [s] ((e * de(s))(_,k)), ds)
 						e = e * de(ds)
 					end
 					--]]
@@ -1132,14 +1101,14 @@ print('e='..e)
 				local nextIndex = matrix(index)
 				nextIndex[k] = nextIndex[k] + 1
 
-				local color = (index-1):ediv((self.size-1):map(function(x) return math.max(x, 1) end))
+				local color = (index-1):ediv((self.size-1):map([x] math.max(x, 1) ))
 				colors:append{color[1] or 0, color[2] or 0, color[3] or .5}
 				local vertex2 = self.xs[index]
 				vertex2s:append{vertex2[1] or 0, vertex2[2] or 0, vertex2[3] or 0}
 				local vertex = self.Xs[index]
 				vertexes:append{vertex[1] or 0, vertex[2] or 0, vertex[3] or 0}
 
-				local color = (nextIndex-1):ediv((self.size-1):map(function(x) return math.max(x, 1) end))
+				local color = (nextIndex-1):ediv((self.size-1):map([x] math.max(x, 1) ))
 				colors:append{color[1] or 0, color[2] or 0, color[3] or .5}
 				local vertex2 = self.xs[nextIndex]
 				vertex2s:append{vertex2[1] or 0, vertex2[2] or 0, vertex2[3] or 0}
@@ -1205,7 +1174,7 @@ void main() {
 	}
 end
 
-function App:drawGrid()
+App.drawGrid = [:] do
 	local xmin, xmax, ymin, ymax = self.view:getBounds(self.width / self.height)
 	xmin = xmin + self.view.pos.x
 	ymin = ymin + self.view.pos.y
@@ -1257,8 +1226,8 @@ local lastTime = 0
 local gui = {
 	animTime = 0,
 }
-function App:update()
-	gl.glClear(bit.bor(gl.GL_COLOR_BUFFER_BIT, gl.GL_DEPTH_BUFFER_BIT))
+App.update = [:] do
+	gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
 
 	local n = #self.size
 
@@ -1329,7 +1298,7 @@ function App:update()
 	App.super.update(self)
 end
 
-function App:updateGUI()
+App.updateGUI = [:] do
 	if ig.luatableBegin('Controls', self, 'controlsOpened') then
 		if ig.igButton(animating and 'Stop Animation' or 'Start Animation') then
 			animating = not animating
