@@ -115,9 +115,9 @@ Geometry.testExact = [:] do
 end
 
 Geometry.compileTensor = [:, expr] do
-	local size = expr:dim()
-	local fs = matrix(size):lambda([...] expr[{...}]:compile(self.coordVars))
-	return [x] matrix(size):lambda([...] fs[{...}](table.unpack(x)))
+	local size = matrix(expr:dim())
+	local fs = size:lambda([...] expr[{...}]:compile(self.coordVars))
+	return [x] size:lambda([...] fs[{...}](table.unpack(x)))
 end
 
 Geometry.calcFromEqns_gs = [:] do
@@ -214,11 +214,11 @@ Polar.create_conns = [:]
 Polar.parallelPropagatorInvs = {
 	-- propagating along r ...
 	([dr, r, phi] do
-		local rL = r
-		local rR = r + dr
+		local rFrom = r
+		local rTo = r + dr
 		return matrix{
 			{1, 0},
-			{0, rR / rL}
+			{0, rTo / rFrom}
 		}
 	end),
 	-- propagating along φ ...
@@ -690,7 +690,7 @@ App.buildSurface = [:, geomName] do
 		'parallel propagator',
 		-- TODO P.P. inv also?  Mind you even in CFD the numerical inverse isn't numerically stable enough for FVS integrators ...
 	}
-	self.propagationMethod = 1
+	self.propagationMethod = 3 --1
 
 --[[
 	self.domain = self.env:domain{size=self.size}
@@ -788,7 +788,7 @@ print('App:rebuildSurface...')
 	-- ... or i could waste cycles and do ...
 	-- ... x = coordinate location
 	-- ... dx = change-in-coordinate
-	local integrateBasis = [index, nextIndex, k, dir, connk, nextConnK, e, ds] do
+	local integrateBasis = [e, index, k, ds, nextIndex, dir, connk, nextConnK] do
 		return integrator(0, e, [s, e] do
 			-- NEAREST filter on connection:
 			--return e:T() * connk
@@ -830,8 +830,8 @@ print('creating metric derivatives numerically...')
 			-- dg_abc = dg_bc/dx^a
 			local dg = matrix{n}:lambda([a] do
 				-- using a constant border
-				local ip = matrix(i) ip[a] = math.min(ip[a]+1, self.size[a])
-				local im = matrix(i) im[a] = math.max(im[a]-1, 1)
+				local ip = i:clone() ip[a] = math.min(ip[a]+1, self.size[a])
+				local im = i:clone() im[a] = math.max(im[a]-1, 1)
 				-- using a first-order derivative
 				return (gs[ip] - gs[im]) / (self.xs[ip][a] - self.xs[im][a])
 			end)
@@ -887,9 +887,14 @@ print('creating connections numerically...')
 			return
 		end
 
-		integrateBasis = [index, nextIndex, k, dir, connk, nextConnK, e, ds] do
-			local prop = geom.parallelPropagatorInvs[k]
-			return matrix{n}:lambda([i] prop(ds, self.xs[index]:unpack()):T() * e[i])
+		self.conns = nil
+		integrateBasis = [e, index, k, ds
+			, nextIndex, dir, connk, nextConnK	-- not used for this one?
+		] do
+			local propInv_k = geom.parallelPropagatorInvs[k]
+			return matrix{n}:lambda([i] 
+				e:T()[i] * propInv_k(ds, self.xs[index]:unpack())
+			):T()
 		end
 	end
 
@@ -925,22 +930,22 @@ print'building surface...'
 	local sofar = {[tostring(index)] = true}
 	while #todo > 0 do
 		local index = todo:remove(1)
-		local conn = self.conns[index]
-if not conn then error("failed to get conn at index "..tostring(index)) end
+		local conn = self.conns and self.conns[index] or nil
+--if not conn then error("failed to get conn at index "..tostring(index)) end
 		-- for each direction ...
 		local _ = matrix.index
 		for k=1,n do
 			-- TODO why not store the coordinate index first?
-			local connk = conn(_,_,k)
+			local connk = conn and conn(_,_,k) or nil
 
 			for dir=-1,1,2 do
-				local nextIndex = matrix(index)
+				local nextIndex = index:clone()
 				nextIndex[k] = nextIndex[k] + dir
 				-- skip the edges
 				if withinEdge(nextIndex, self.size)
 				and not sofar[tostring(nextIndex)]
 				then
-					local nextConnK = self.conns[nextIndex](_,_,k)
+					local nextConnK = self.conns and self.conns[nextIndex](_,_,k) or nil
 
 					-- cheating to get around anholonomic coordinate systems
 					-- technically I should be using commutation coefficients or something
@@ -963,7 +968,7 @@ if not conn then error("failed to get conn at index "..tostring(index)) end
 				
 					-- TODO integrate both at the same time, e and X, for better accuracy ...
 
-					e = integrateBasis(index, nextIndex, k, dir, connk, nextConnK, e, ds)
+					e = integrateBasis(e, index, k, ds, nextIndex, dir, connk, nextConnK)
 					
 					X = integrator(0, X, [s, X] do
 						local f = 0
@@ -1035,7 +1040,7 @@ if not conn then error("failed to get conn at index "..tostring(index)) end
 						elseif b == 0 and c == 0 then
 							local l1, l2 = a, d
 							local evR = matrix{{1,0},{0,1}}
-							local evL = matrix(evR)
+							local evL = evR:clone()
 							de = [ds] do
 								return evR * matrix{
 									{math.exp(ds * l1), 0},
@@ -1168,7 +1173,7 @@ print('e='..e)
 		local index = indexMinusOne+1
 		for k=1,n do
 			if index[k] < sizeMinusOne[k] then
-				local nextIndex = matrix(index)
+				local nextIndex = index:clone()
 				nextIndex[k] = nextIndex[k] + 1
 
 				local color = (index-1):ediv(sizeMinusOne)
@@ -1194,7 +1199,7 @@ print('e='..e)
 			if self.size[k] > 1
 			and index[k] < self.size[k]-1
 			then
-				local nextIndex = matrix(index)
+				local nextIndex = index:clone()
 				nextIndex[k] = nextIndex[k] + 1
 
 				local color = (index-1):ediv((self.size-1):map([x] math.max(x, 1) ))
