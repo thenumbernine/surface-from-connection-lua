@@ -7,6 +7,7 @@ local ffi = require 'ffi'
 local vec3f = require 'vec-ffi.vec3f'
 local vec3d = require 'vec-ffi.vec3d'
 local GLSceneObject = require 'gl.sceneobject'
+local gnuplot = require 'gnuplot'
 
 --[[
 local CLEnv = require 'cl.obj.env'
@@ -42,10 +43,27 @@ local surfaceBuildOrder = 'last'
 local Geometry = class()
 
 Geometry.init = [:, app] do
+	local n = #self.coords
 	self.app = app
 	self.xmin = matrix(self.xmin)
 	self.xmax = matrix(self.xmax)
 	self.startCoord = matrix(self.startCoord)
+	
+	if self.X0 then	-- class provided
+		self.X0 = matrix(self.X0)
+	elseif self.exactChart then
+		self.X0 = self:exactChart(self.startCoord:unpack())
+	else
+		self.X0 = matrix{n}:zeros()
+	end
+	
+	if self.e0 then
+		self.e0 = matrix(self.e0)
+	elseif self.exactBasis then
+		self.e0 = self:exactBasis(self.startCoord:unpack())
+	else
+		self.e0 = matrix{n,n}:eye()
+	end
 
 	self.coordVars = table.map(self.coords, [name] do
 		local var = symmath.var(name)
@@ -75,8 +93,6 @@ end
 
 Geometry.testExact = [:] do
 	local app = self.app
-	local exactConns = self:calcFromEqns_conns()
-	local connNumConnDiff = app.size:lambda([i,j] ((app.conns[i][j] - exactConns[i][j]):norm()))
 
 	local x,y,z
 
@@ -87,7 +103,7 @@ Geometry.testExact = [:] do
 	end
 
 	if app.size[2] == 1 then
-		y = matrix{1}:lambda([j] app.xs[1][1][2])	-- TODO why the 2 in the z?
+		y = matrix{1}:lambda([j] app.xs[1][1][2])
 	else
 		y = matrix{app.size[2]-2}:lambda([j] app.xs[1][j+1][2])
 	end
@@ -95,23 +111,83 @@ Geometry.testExact = [:] do
 	local zrange = app.size - 2
 	zrange[1] = math.max(zrange[1], 1)
 	zrange[2] = math.max(zrange[2], 1)
-	z = zrange:lambda([i,j] do
-		local iR = zrange[1] == 1 and i or i+1
-		local jR = zrange[2] == 1 and j or j+1
-		return connNumConnDiff[iR][jR]
-	end)
-
-	local gnuplot = require 'gnuplot'
-	gnuplot{
-		output = 'conn numeric vs analytic.png',
-		style = 'data lines',
-		xlabel = self.coords and self.coords[1] or 'x^1',
-		ylabel = self.coords and self.coords[2] or 'x^2',
-		--log = 'z',
-		griddata = {x = x, y = y, z},
-		{splot=true, using='1:2:3', title = 'Γ^a_b_c |analytic - numeric|'},
-	}
-	print('max Γ^a_bc |analytic - numeric|', z:normLInf())
+	
+	for _,info in ipairs{
+		-- position integrated vs exact
+		{
+			name = 'pos',
+			title = 'X',
+			has = [] self.exactChart,
+			calcz = [] do
+				return zrange:lambda([i,j] do
+					-- [[ do I do this way?
+					local iR = zrange[1] == 1 and i or i+1
+					local jR = zrange[2] == 1 and j or j+1
+					local is = {iR,jR}
+					--]]
+					--[[ or this way?
+					local is = {i,j}
+					--]]
+print(
+	matrix(is),
+	app.xs[is],
+	self:exactChart(app.xs[is]:unpack()),
+	app.Xs[is]
+)
+					return (self:exactChart(app.xs[is]:unpack()) - app.Xs[is]):norm()
+				end)
+			end,
+		},
+		-- basis integrated/propagated vs exact
+		{
+			name = 'basis',
+			title = 'e_a^b',
+			has = [] self.exactBasis,
+			calcz = [] do
+				return zrange:lambda([i,j] do
+					-- [[ do I do this way?
+					local iR = zrange[1] == 1 and i or i+1
+					local jR = zrange[2] == 1 and j or j+1
+					local is = {iR,jR}
+					--]]
+					--[[ or this way?  nope, too much error at the border.
+					local is = {i,j}
+					--]]
+					return (self:exactBasis(app.xs[is]:unpack()) - app.es[is]):norm()
+				end)
+			end,
+		},	
+		-- connections ... numerical-finite-difference-of-metric vs exact ...
+		-- only needed when the connection is calculated numerically from the metric and is not provided explicitly.
+		{
+			name = 'conn',	-- filename
+			title = 'Γ^a_b_c',	-- gnuplot title
+			has = [] self.calc_conns,
+			calcz = [] do
+				local exactConns = self:calcFromEqns_conns()
+				local connNumConnDiff = app.size:lambda([i,j] ((app.conns[i][j] - exactConns[i][j]):norm()))
+				return zrange:lambda([i,j] do
+					local iR = zrange[1] == 1 and i or i+1
+					local jR = zrange[2] == 1 and j or j+1
+					return connNumConnDiff[iR][jR]
+				end)
+			end
+		},
+	} do
+		if info.has() then
+			z = info.calcz()
+			gnuplot{
+				output = info.name..' numeric vs analytic.png',
+				style = 'data lines',
+				xlabel = self.coords and self.coords[1] or 'x^1',
+				ylabel = self.coords and self.coords[2] or 'x^2',
+				--log = 'z',
+				griddata = {x = x, y = y, z},
+				{splot=true, using='1:2:3', title = info.title..' |analytic - numeric|'},
+			}
+			print('max '..info.title..' |analytic - numeric|', z:normLInf())
+		end
+	end
 end
 
 Geometry.compileTensor = [:, expr] do
@@ -129,6 +205,20 @@ end
 -- this is only used for comparing the error between the numerical and the exact connections
 Geometry.calcFromEqns_conns = [:] self.calc.Conn and self.app.size:lambda([...] self.calc.Conn(self.app.xs[{...}])) or nil
 
+Geometry.calcX0 = [:] do
+	if self.startCoord 
+	and self.exactChart
+	then
+		return self:exactChart(table.unpack(self.startCoord))
+	end
+end
+Geometry.calcE0 = [:] do
+	if self.startCoord 
+	and self.exactBasis
+	then
+		return self:exactBasis(table.unpack(self.startCoord))
+	end
+end
 
 --[[
 what each geometry subclass needs:
@@ -186,6 +276,17 @@ Polar.xmax = matrix{2, 2 * math.pi}
 Polar.startCoord = {.5,0}
 --]]
 -- [[ analytically
+Polar.exactChart = [:, r, phi] do
+	return matrix{r * math.cos(phi), r * math.sin(phi)}
+end
+Polar.exactBasis = [:, r, phi] do
+	local c = math.cos(phi)
+	local s = math.sin(phi)
+	return matrix{
+		{c, s},
+		{r * -s, r * c}
+	}
+end
 Polar.createMetric = [:] do
 	local r, theta = self.coordVars:unpack()
 	return symmath.Tensor('_ab', {1, 0}, {0, r^2})
@@ -706,8 +807,9 @@ App.buildSurface = [:, geomName] do
 	self.view.orbit:set(0,0,0)
 	self.view.angle:set(0,0,0,1)
 
-	-- e0
-	self.e0 = matrix{n,n}:eye()
+	-- X0 & e0
+	geom.X0 = geom.X0 or matrix{n}:zeros()
+	geom.e0 = geom.e0 or matrix{n,n}:eye()
 	-- ... conn0 also?
 
 --[=[ opencl code
@@ -768,6 +870,7 @@ print()
 print('App:rebuildSurface...')
 	local n = #self.size
 	local geom = self.geom
+	local _ = matrix.index
 
 	self.surfaceObj = nil
 
@@ -867,11 +970,6 @@ print('creating connections numerically...')
 			return check2
 		end)
 
-		if geom and geom.create_conns then
-print('*** comparing numeric to exact ***')
-			geom:testExact()
-		end
-
 	elseif self.propagationMethod == 2 then
 		if not geom.create_conns then
 			print('!!! WARNING !!! propagation method '..tostring(self.propagationMethods[self.propagationMethod])..' not provided by this geometry !!!')
@@ -893,7 +991,7 @@ print('creating connections numerically...')
 		] do
 			local propInv_k = geom.parallelPropagatorInvs[k]
 			return matrix{n}:lambda([i] 
-				e:T()[i] * propInv_k(ds, self.xs[index]:unpack())
+				propInv_k(ds, self.xs[index]:unpack()):T() * e(_,i)
 			):T()
 		end
 	end
@@ -915,7 +1013,8 @@ print('creating connections numerically...')
 		end
 		-- TODO reset the start coord in the GUI if it has to be clamped
 	end
-	self.es[i] = self.e0:clone()	--matrix{n,n}:eye()
+	self.Xs[i] = geom.X0:clone()	-- geom:calcX0()	-- default zeroes
+	self.es[i] = geom.e0:clone()	-- geom:calcE0()	-- default ident
 	local withinEdge = [index,size] do
 		for i=1,n do
 			if index[i] <= 1 or index[i] >= size[i] then return false end
@@ -933,7 +1032,6 @@ print'building surface...'
 		local conn = self.conns and self.conns[index] or nil
 --if not conn then error("failed to get conn at index "..tostring(index)) end
 		-- for each direction ...
-		local _ = matrix.index
 		for k=1,n do
 			-- TODO why not store the coordinate index first?
 			local connk = conn and conn(_,_,k) or nil
@@ -1152,7 +1250,19 @@ print('e='..e)
 	end
 	--]]
 
-	-- recenter ...
+
+	--[[
+	TODO more numeric testing
+	what can we test?
+	- integrated vs analytical X(x)'s
+	- integrated vs analytical e(x)'s
+	- integrated vs analytical conn(x)'s
+	--]]
+	if geom then
+print('*** comparing connections from create_gs / create whatever to create_conns ***')
+		geom:testExact()
+	end
+
 	local com = matrix{n}:lambda([] 0)
 	for i in self.size:range() do
 		if self.Xs[i]:isfinite() then
@@ -1160,9 +1270,17 @@ print('e='..e)
 		end
 	end
 	com = com / self.size:prod()
+	--[[ recenter ...
 	for i in self.size:range() do
 		self.Xs[i] = self.Xs[i] - com
 	end
+	--]]
+	-- [[ instead ... just recenter the view 
+	for i=1,n do
+		self.view.pos.s[i-1] -= com[i]
+		self.view.orbit.s[i-1] -= com[i]
+	end
+	--]]
 
 	local vertexes = table()
 	local vertex2s = table()
@@ -1402,6 +1520,8 @@ App.update = [:] do
 end
 
 App.updateGUI = [:] do
+	local geom = self.geom
+	local n = #geom.coords
 	if ig.luatableBegin('Controls', self, 'controlsOpened') then
 		if ig.igButton(animating and 'Stop Animation' or 'Start Animation') then
 			animating = not animating
@@ -1443,20 +1563,6 @@ App.updateGUI = [:] do
 		end
 		ig.igPopID()
 
-		local n = #self.size
-		for _,field in ipairs{'xmin', 'xmax', 'startCoord'} do
-			ig.igText(field == 'startCoord' and 'x0' or field)
-			for j=1,n do
-				if ig.luatableTooltipInputFloat(field..' '..j, self.geom[field], j, .01, .1, '%f', ig.ImGuiInputTextFlags_EnterReturnsTrue) then
-					if field == 'startCoord' then
-						self.geom.startCoord[j] = math.clamp(self.geom.startCoord[j], self.geom.xmin[j], self.geom.xmax[j])
-					end
-					self:rebuildSurface()
-				end
-				if j < n then ig.igSameLine() end
-			end
-		end
-
 		ig.igText'resolution'
 		for j=1,n do
 			if ig.luatableTooltipInputInt('size '..j, self.size, j, 0, 0, ig.ImGuiInputTextFlags_EnterReturnsTrue) then
@@ -1465,10 +1571,23 @@ App.updateGUI = [:] do
 			if j < n then ig.igSameLine() end
 		end
 
+		for _,field in ipairs{'xmin', 'xmax', 'startCoord', 'X0'} do
+			ig.igText(field == 'startCoord' and 'x0' or field)
+			for j=1,n do
+				if ig.luatableTooltipInputFloat(field..' '..j, geom[field], j, .01, .1, '%f', ig.ImGuiInputTextFlags_EnterReturnsTrue) then
+					if field == 'startCoord' then
+						geom.startCoord[j] = math.clamp(geom.startCoord[j], geom.xmin[j], geom.xmax[j])
+					end
+					self:rebuildSurface()
+				end
+				if j < n then ig.igSameLine() end
+			end
+		end
+
 		ig.igText'e0'
 		for i=1,n do
 			for j=1,n do
-				if ig.luatableTooltipInputFloat('e0_'..i..'_'..j, self.e0[i], j, .01, .1, '%f', ig.ImGuiInputTextFlags_EnterReturnsTrue) then
+				if ig.luatableTooltipInputFloat('e0_'..i..'_'..j, geom.e0[i], j, .01, .1, '%f', ig.ImGuiInputTextFlags_EnterReturnsTrue) then
 					self:rebuildSurface()
 				end
 				if j < n then ig.igSameLine() end
