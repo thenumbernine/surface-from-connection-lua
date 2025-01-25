@@ -45,10 +45,10 @@ local Geometry = class()
 Geometry.init = [:, app] do
 	local n = #self.coords
 	self.app = app
-	self.xmin = matrix(self.xmin)
-	self.xmax = matrix(self.xmax)
+	self.xmin = self.xmin and matrix(self.xmin) or matrix{n}:lambda([] -1)
+	self.xmax = self.xmax and matrix(self.xmax) or matrix{n}:lambda([] 1)
 	self.startCoord = matrix(self.startCoord)
-	
+
 	if self.X0 then	-- class provided
 		self.X0 = matrix(self.X0)
 	elseif self.exactChart then
@@ -56,7 +56,7 @@ Geometry.init = [:, app] do
 	else
 		self.X0 = matrix{n}:zeros()
 	end
-	
+
 	if self.e0 then
 		self.e0 = matrix(self.e0)
 	elseif self.exactBasis then
@@ -111,7 +111,7 @@ Geometry.testExact = [:] do
 	local zrange = app.size - 2
 	zrange[1] = math.max(zrange[1], 1)
 	zrange[2] = math.max(zrange[2], 1)
-	
+
 	for _,info in ipairs{
 		-- position integrated vs exact
 		{
@@ -128,12 +128,6 @@ Geometry.testExact = [:] do
 					--[[ or this way?
 					local is = {i,j}
 					--]]
-print(
-	matrix(is),
-	app.xs[is],
-	self:exactChart(app.xs[is]:unpack()),
-	app.Xs[is]
-)
 					return (self:exactChart(app.xs[is]:unpack()) - app.Xs[is]):norm()
 				end)
 			end,
@@ -156,7 +150,7 @@ print(
 					return (self:exactBasis(app.xs[is]:unpack()) - app.es[is]):norm()
 				end)
 			end,
-		},	
+		},
 		-- connections ... numerical-finite-difference-of-metric vs exact ...
 		-- only needed when the connection is calculated numerically from the metric and is not provided explicitly.
 		{
@@ -206,14 +200,14 @@ end
 Geometry.calcFromEqns_conns = [:] self.calc.Conn and self.app.size:lambda([...] self.calc.Conn(self.app.xs[{...}])) or nil
 
 Geometry.calcX0 = [:] do
-	if self.startCoord 
+	if self.startCoord
 	and self.exactChart
 	then
 		return self:exactChart(table.unpack(self.startCoord))
 	end
 end
 Geometry.calcE0 = [:] do
-	if self.startCoord 
+	if self.startCoord
 	and self.exactBasis
 	then
 		return self:exactBasis(table.unpack(self.startCoord))
@@ -229,7 +223,7 @@ what each geometry subclass needs:
 	* create_gs - to calculate the metric numerically
 	* createMetric - to calculate the metric analytically based on the coordinate chart
 	(in either case, if create_conns is defined, it is used to validate the numerical accuracy)
-* or if neither is chosen 
+* or if neither is chosen
 	* create_conns - to use an identity metric and numerical connections
 * ... otherwise these return identity g_ab's and zero Γ^a_bc's.
 
@@ -797,20 +791,12 @@ App.buildSurface = [:, geomName] do
 	self.domain = self.env:domain{size=self.size}
 --]]
 
-	self.xmin = geom and geom.xmin or matrix{n}:lambda([] -1)
-	self.xmax = geom and geom.xmax or matrix{n}:lambda([] 1)
-
 	self.view.ortho = n == 2
 
 	-- reset view every time you change charts
 	self.view.pos:set(0,0,self.viewDist)
 	self.view.orbit:set(0,0,0)
 	self.view.angle:set(0,0,0,1)
-
-	-- X0 & e0
-	geom.X0 = geom.X0 or matrix{n}:zeros()
-	geom.e0 = geom.e0 or matrix{n,n}:eye()
-	-- ... conn0 also?
 
 --[=[ opencl code
 	-- regenerate these to prevent ffi cdef redefs
@@ -875,16 +861,16 @@ print('App:rebuildSurface...')
 	self.surfaceObj = nil
 
 	--[[ cell centered, including borders
-	self.dx = matrix{n}:ones():emul(self.xmax - self.xmin):ediv(self.size)
-	self.xs = self.size:lambda([...] ((matrix{...} - .5):emul(self.dx) + self.xmin) )
+	self.dx = matrix{n}:ones():emul(geom.xmax - geom.xmin):ediv(self.size)
+	self.xs = self.size:lambda([...] ((matrix{...} - .5):emul(self.dx) + geom.xmin) )
 	--]]
 	-- [[ vertex centered, excluding borders, so position 2,2 is at xmin (useful for centering the corner vertex)
-	self.dx = matrix{n}:ones():emul(self.xmax - self.xmin):ediv(self.size-3)
-	self.xs = self.size:lambda([...] ((matrix{...} - 2):emul(self.dx) + self.xmin) )
+	self.dx = matrix{n}:ones():emul(geom.xmax - geom.xmin):ediv(self.size-3)
+	self.xs = self.size:lambda([...] ((matrix{...} - 2):emul(self.dx) + geom.xmin) )
 
 	local integrator = select(2, next(self.integrationMethods[self.integrationMethod]))
-	
-	-- e = basis matrix ... are rows or cols the basis forms? 
+
+	-- e = basis matrix ... are rows or cols the basis forms?
 	-- i = lattice index
 	-- k = which dimension we're moving along
 	-- dir = forward or backwards on the lattice
@@ -990,7 +976,7 @@ print('creating connections numerically...')
 			, nextIndex, dir, connk, nextConnK	-- not used for this one?
 		] do
 			local propInv_k = geom.parallelPropagatorInvs[k]
-			return matrix{n}:lambda([i] 
+			return matrix{n}:lambda([i]
 				propInv_k(ds, self.xs[index]:unpack()):T() * e(_,i)
 			):T()
 		end
@@ -998,7 +984,7 @@ print('creating connections numerically...')
 
 	-- embedded space position
 	self.Xs = self.size:lambda([...] matrix{n}:zeros())
-	
+
 	-- rows of es = components of the basis vectors in the embedded Cartesian space
 	self.es = self.size:lambda([...] matrix{n,n}:zeros())
 
@@ -1063,23 +1049,23 @@ print'building surface...'
 					local e = eOrig:clone()
 					local X = XOrig:clone()
 
-				
+
 					-- TODO integrate both at the same time, e and X, for better accuracy ...
 
 					e = integrateBasis(e, index, k, ds, nextIndex, dir, connk, nextConnK)
-					
+
 					X = integrator(0, X, [s, X] do
 						local f = 0
 						if self.posFilterMethod == 2 then
 							f = s / ds
 						end
-						
+
 						-- constant:
 						--return eOrig(_,k)
 						-- linear interpolation
 						return e[k] * f + eOrig[k] * (1 - f)
 					end, ds)
-					
+
 					--[[ matrix-exponent to calculate parallel-propagator numerically (instead of numerically integrating the connection)
 					-- TODO eigen-decompose and then exponent the eigenvalues ...
 					-- TODO this into the 'integrateBasis' as another of the propagationMethods
@@ -1275,7 +1261,7 @@ print('*** comparing connections from create_gs / create whatever to create_conn
 		self.Xs[i] = self.Xs[i] - com
 	end
 	--]]
-	-- [[ instead ... just recenter the view 
+	-- [[ instead ... just recenter the view
 	for i=1,n do
 		self.view.pos.s[i-1] -= com[i]
 		self.view.orbit.s[i-1] -= com[i]
