@@ -879,15 +879,10 @@ print('App:rebuildSurface...')
 	-- ... dx = change-in-coordinate
 	local integrateBasis = [e, index, k, ds, nextIndex, dir, connk, nextConnK] do
 		return integrator(0, e, [s, e] do
-			-- NEAREST filter on connection:
-			--return e:T() * connk
-			-- LINEAR filter on connection:
-			local f = 0
-			if self.basisFilterMethod == 2 then
-				f = s / ds
-			end
-			return (nextConnK * f + connk * (1 - f)):T() * e
-			-- using analytical solution
+			-- integrating the conn from numerical finite difference
+			local f = self.basisFilterMethod == 2 and (ds == 0 and 0 or s / ds) or 0
+			return math.mix(connk, nextConnK, f):T() * e
+			-- integrating the analytical conn
 			--local x = self.xs[index]
 			--local xNext = self.xs[nextIndex]
 			--return geom.calc.Conn( (x * s + xNext * (ds - s)) / ds  )(_,k):T() * e
@@ -980,6 +975,7 @@ print('creating connections numerically...')
 				propInv_k(ds, self.xs[index]:unpack()):T() * e(_,i)
 			):T()
 		end
+	-- TODO - parallel-propagate based on matrix-exponent of connection from finite-difference of metric (and numerical inverse)
 	end
 
 	-- embedded space position
@@ -1043,28 +1039,54 @@ print'building surface...'
 					-- derivative along coordinate
 					local ds = dir * self.dx[k] * len
 
-					local eOrig = self.es[index]
 					local XOrig = self.Xs[index]
+					local eOrig = self.es[index]
 
-					local e = eOrig:clone()
-					local X = XOrig:clone()
-
-
-					-- TODO integrate both at the same time, e and X, for better accuracy ...
-
-					e = integrateBasis(e, index, k, ds, nextIndex, dir, connk, nextConnK)
-
-					X = integrator(0, X, [s, X] do
-						local f = 0
-						if self.posFilterMethod == 2 then
-							f = s / ds
-						end
-
-						-- constant:
-						--return eOrig(_,k)
-						-- linear interpolation
-						return e[k] * f + eOrig[k] * (1 - f)
-					end, ds)
+					local e, X
+					if self.propagationMethod ~= 3 then
+						--[[ integrate e then X ...
+						-- for polar holonomic, X error <= 0.38936524475501, e error <= 0.38171956061742
+						e = integrateBasis(eOrig, index, k, ds, nextIndex, dir, connk, nextConnK)
+						X = integrator(0, XOrig, [s, X] do
+							return math.mix(
+								eOrig[k],
+								e[k],
+								self.posFilterMethod == 2 and s / ds or 0
+							)
+						end, ds)
+						--]]
+						-- [[ integrate both at the same time for better accuracy ...
+						-- for polar holonomic, X error <= 0.22228580818733, e error <= 0.22455744144822
+						local XEOrig = matrix{
+							XOrig,
+							eOrig:unpack()
+						}
+						--dXE of the X is e[k]
+						--dXE of the e is conn[_,k,_] ... or it's the negative transpose of the conn ...
+						local XE = integrator(0, XEOrig, [s, XE] do
+							local emid = integrateBasis(eOrig, index, k, s, nextIndex, dir, connk, nextConnK)
+							local dX = emid[k]
+							local f = self.posFilterMethod == 2 and s / ds or 0	-- since we're integrating the two together, I can't easily separate the two anymore, but if 'integrateBasis' is going to use 'basisFilterMethod' then this might as well use the other: 'posFilterMethod'
+							local connmid = math.mix(connk, nextConnK, f)
+							local dE = connmid:T() * emid
+							local XEmid = matrix{
+								dX,
+								dE:unpack()
+							}
+							return XEmid
+						end, ds)
+						X = table.remove(XE, 1)
+						e = XE
+						--]]
+					else
+						-- propagate e, use mid-propagated e's to integrate X
+						-- for polar holonomic, X error <= 0.00037882000703206, e error <= 5.1265983257016e-15
+						e = integrateBasis(eOrig, index, k, ds, nextIndex, dir, connk, nextConnK)
+						X = integrator(0, XOrig, [s, X] do
+							local emid = integrateBasis(eOrig, index, k, s, nextIndex, dir, connk, nextConnK)
+							return emid[k]
+						end, ds)
+					end
 
 					--[[ matrix-exponent to calculate parallel-propagator numerically (instead of numerically integrating the connection)
 					-- TODO eigen-decompose and then exponent the eigenvalues ...
@@ -1236,14 +1258,6 @@ print('e='..e)
 	end
 	--]]
 
-
-	--[[
-	TODO more numeric testing
-	what can we test?
-	- integrated vs analytical X(x)'s
-	- integrated vs analytical e(x)'s
-	- integrated vs analytical conn(x)'s
-	--]]
 	if geom then
 print('*** comparing connections from create_gs / create whatever to create_conns ***')
 		geom:testExact()
@@ -1263,8 +1277,8 @@ print('*** comparing connections from create_gs / create whatever to create_conn
 	--]]
 	-- [[ instead ... just recenter the view
 	for i=1,n do
-		self.view.pos.s[i-1] -= com[i]
-		self.view.orbit.s[i-1] -= com[i]
+		self.view.pos.s[i-1] = -com[i]
+		self.view.orbit.s[i-1] = -com[i]
 	end
 	--]]
 
