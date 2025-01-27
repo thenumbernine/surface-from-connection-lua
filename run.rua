@@ -128,7 +128,8 @@ Geometry.testExact = [:] do
 					--[[ or this way?
 					local is = {i,j}
 					--]]
-					return (self:exactChart(app.xs[is]:unpack()) - app.Xs[is]):norm()
+					local exact = self:exactChart(app.xs[is]:unpack())
+					return (exact - app.Xs[is]):norm() / exact:norm()
 				end)
 			end,
 		},
@@ -147,7 +148,8 @@ Geometry.testExact = [:] do
 					--[[ or this way?  nope, too much error at the border.
 					local is = {i,j}
 					--]]
-					return (self:exactBasis(app.xs[is]:unpack()) - app.es[is]):norm()
+					local exact = self:exactBasis(app.xs[is]:unpack())
+					return (exact - app.es[is]):norm() / exact:norm()
 				end)
 			end,
 		},
@@ -158,12 +160,11 @@ Geometry.testExact = [:] do
 			title = 'Γ^a_b_c',	-- gnuplot title
 			has = [] self.calc_conns,
 			calcz = [] do
-				local exactConns = self:calcFromEqns_conns()
-				local connNumConnDiff = app.size:lambda([i,j] ((app.conns[i][j] - exactConns[i][j]):norm()))
 				return zrange:lambda([i,j] do
 					local iR = zrange[1] == 1 and i or i+1
 					local jR = zrange[2] == 1 and j or j+1
-					return connNumConnDiff[iR][jR]
+					local exact = self.calc.Conn(self.app.xs[iR][jR])
+					return (exact - app.conns[iR][jR]):norm() / exact:norm()
 				end)
 			end
 		},
@@ -189,15 +190,6 @@ Geometry.compileTensor = [:, expr] do
 	local fs = size:lambda([...] expr[{...}]:compile(self.coordVars))
 	return [x] size:lambda([...] fs[{...}](table.unpack(x)))
 end
-
-Geometry.calcFromEqns_gs = [:] do
-	if not self.calc.g then return end
-	local app = self.app
-	return app.size:lambda([...] self.calc.g(self.app.xs[{...}]))
-end
-
--- this is only used for comparing the error between the numerical and the exact connections
-Geometry.calcFromEqns_conns = [:] self.calc.Conn and self.app.size:lambda([...] self.calc.Conn(self.app.xs[{...}])) or nil
 
 Geometry.calcX0 = [:] do
 	if self.startCoord
@@ -741,37 +733,47 @@ local geomClassNames = geomClassesForName:map([kv] ((next(kv))) )
 
 local GridFilter = class()
 GridFilter.init = [:, grid, min, max, size] do
-	self.grid = grid
-	self.min = min
-	self.max = max
-	self.size = size
+	self.grid = assert(grid)
+	self.min = assert(min)
+	self.max = assert(max)
+	self.size = assert(size)
 end
 
 local NearestGridFilter = GridFilter:subclass()
-NearestGridFilter.__call = [:, x] do
+NearestGridFilter.__call = [:, app, x] do
 	local is = (x - self.min):ediv(self.max - self.min):emul(self.size) + 1
 	is = is:map([x,j] math.clamp(math.floor(x), 1, self.size[j]))
 	return self.grid[is]
 end
 
 local LinearGridFilter = GridFilter:subclass()
-LinearGridFilter.__call = [:, x] do
-	local is = (x - self.min):ediv(self.max - self.min):emul(self.size) + 1
+LinearGridFilter.__call = [:, app, x] do
+	local n = #self.size
+	local is = (x - self.min):ediv(self.max - self.min):emul(self.size - 1) + 1
 	local fs = is - is:map([x] math.floor(x))
-	-- TODO for edges...
-	is = is:map([x,j] math.clamp(math.floor(x), 1, self.size[j]))
+	for j=1,n do
+		is[j] = math.clamp(math.floor(is[j]), 1, self.size[j])
+		if is[j] == self.size[j] then fs[j] = 0 end
+	end
 
 	-- n-linear interpolation
-	local sum = matrix{n}:zeros()
-	for corner = 0,(1<<n)-1 do
+	local sum
+	for cornerBits = 0,(1<<n)-1 do
 		local cis = is:clone()
 		local coeff = 1
 		for j=1,n do
-			local has = (corner >> (j-1)) & 1
+			local has = (cornerBits >> (j-1)) & 1
 			cis[j] += has
 			coeff *= has == 0 and (1 - fs[j]) or fs[j]
 		end
-		sum += self.grid[cis] * coeff
+		if coeff > 0 then
+			local cornerValue = self.grid[cis]
+			if not sum then
+				sum = cornerValue * coeff
+			else
+				sum += cornerValue * coeff
+			end
+		end
 	end
 	return sum
 end
@@ -922,22 +924,25 @@ print('App:rebuildSurface...')
 
 	self.conns = nil
 
-	-- calculate Δg_uv => Γ^a_bc
+	-- calculate Γ^a_bc := 1/2 inv(g_au) (Δ_c g_ub + Δ_b g_uc - Δ_u g_bc)
 	if self.calcConnFromMetric then
 
 		local gs, gUs, dgs
 		if not (geom.createMetric or geom.create_gs) then
-			print('!!! WARNING !!! createMetirc / create_gs not provided by this geometry !!!')
+			print('!!! WARNING !!! createMetric / create_gs not provided by this geometry !!!')
 			return
 		end
 print('creating metric...')
 		if geom.create_gs then
 print('creating metric numerically...')
 			gs = geom:create_gs()
-		else
+		elseif geom.calc.g then	-- should be there if createMetric is there ...
 print('creating metric analytically...')
-			gs = geom:calcFromEqns_gs()
+			gs = self.size:lambda([...] geom.calc.g(self.xs[{...}]))
 			-- TODO might as well compute g^ab analytically too ...
+		else
+			print('!!! WARNING !!! createMetric found but calc.g missing !!!')
+			return
 		end
 
 		--or self.size:lambda([...] matrix{n,n}:eye() )
@@ -947,7 +952,7 @@ print('creating metric inverse numerically...')
 print('creating metric derivatives numerically...')
 		dgs = self.size:lambda([...] do
 			local i = matrix{...}
-			-- dg_abc = dg_bc/dx^a
+			-- dg[a][b][c] := d/dx^a g_bc
 			local dg = matrix{n}:lambda([a] do
 				-- using a constant border
 				local ip = i:clone() ip[a] = math.min(ip[a]+1, self.size[a])
@@ -958,7 +963,7 @@ print('creating metric derivatives numerically...')
 			-- reshape dg_abc = g_ab,c
 			return matrix{n,n,n}:lambda([a,b,c] dg[c][a][b])
 		end)
-	
+
 print('creating connections numerically...')
 		self.conns = self.size:lambda([...] do
 			local i = matrix{...}
@@ -966,25 +971,7 @@ print('creating connections numerically...')
 			-- TODO this assumes the metric is holonomic ... otherwise TODO we need the commutation coefficients
 			local numConnLower = matrix{n,n,n}:lambda([a,b,c] .5 * (dg[a][b][c] + dg[a][c][b] - dg[b][c][a]))
 			local gU = gUs[i]
-			local check1 = gU * numConnLower
-			local check2 = matrix{n,n,n}:lambda([a,b,c] do
-				local s = 0
-				for d=1,n do
-					s = s + gU[a][d] * numConnLower[d][b][c]
-				end
-				return s
-			end)
-			local err = (check1 - check2):norm()
-			if err ~= 0
-			and err == err	-- skip the nans
-			then
-				print('check1')
-				print(check1)
-				print('check2')
-				print(check2)
-				error('norms differ by '..err)
-			end
-			return check2
+			return gU * numConnLower
 		end)
 
 	-- use Γ^a_bc provided
@@ -999,7 +986,6 @@ print('creating connections numerically...')
 		end
 
 print('creating connections numerically...')
-		-- if calcFromEqns_gs isn't there, then rely on create_conns for providing the initial connections
 		self.conns = geom:create_conns()
 	end
 
@@ -1021,10 +1007,13 @@ print('creating connections numerically...')
 		self.getParallelPropagatorInv = [:, x, k, ds] do
 			local connk = self:getConn(x)(_,_,k)
 			local x2 = x:clone()
-			x[k] += ds
-			local nextConnK = self:getConns(x2)(_,_,k)
-			local connMid = math.mix(connk, nextConnK, f)
-			error("what's the fraction? and then do the matrix-exp...")
+			x2[k] += ds
+			local connkMid = self:getConn(x2)(_,_,k)
+		
+			-- now we want to calculate P(x,x+dxk) = exp(int(conn_k from x to x+dxk))
+			-- so first we want to integrate from connk to connkMid along ds ...
+			-- next we want to exponent the integral
+			error'TODO'
 		end
 	end
 
@@ -1040,13 +1029,20 @@ print('creating connections numerically...')
 		-- ... dx = change-in-coordinate
 		integrateBasis = [e, index, k, ds, nextIndex, dir, connk, nextConnK] do
 			return integrator(0, e, [s, e] do
-				-- integrating the conn from numerical finite difference
+				--[[ using the grid filter abstraction ...
+				local x = self.xs[index]:clone()
+				x[k] += ds
+				return self:getConn(x)(_,_,k):T() * e
+				--]]
+				-- [[ integrating the conn from numerical finite difference
 				local f = self.basisFilterMethod == 2 and (ds == 0 and 0 or s / ds) or 0
 				return math.mix(connk, nextConnK, f):T() * e
-				-- integrating the analytical conn
-				--local x = self.xs[index]
-				--local xNext = self.xs[nextIndex]
-				--return geom.calc.Conn( (x * s + xNext * (ds - s)) / ds  )(_,k):T() * e
+				--]]
+				--[[ integrating the analytical conn
+				local x = self.xs[index]
+				local xNext = self.xs[nextIndex]
+				return geom.calc.Conn( (x * s + xNext * (ds - s)) / ds  )(_,k):T() * e
+				--]]
 			end, ds)
 		end
 	else	
@@ -1103,7 +1099,7 @@ print'building surface...'
 
 			for dir=-1,1,2 do
 				local nextIndex = index:clone()
-				nextIndex[k] = nextIndex[k] + dir
+				nextIndex[k] += dir
 				-- skip the edges
 				if withinEdge(nextIndex, self.size)
 				and not sofar[tostring(nextIndex)]
@@ -1149,7 +1145,9 @@ print'building surface...'
 						local XE = integrator(0, XEOrig, [s, XE] do
 							local emid = integrateBasis(eOrig, index, k, s, nextIndex, dir, connk, nextConnK)
 							local dX = emid[k]
-							local f = self.posFilterMethod == 2 and s / ds or 0	-- since we're integrating the two together, I can't easily separate the two anymore, but if 'integrateBasis' is going to use 'basisFilterMethod' then this might as well use the other: 'posFilterMethod'
+							local f = self.posFilterMethod == 2 and s / ds or 0	
+								-- since we're integrating the two together, I can't easily separate the two anymore, 
+								-- but if 'integrateBasis' is going to use 'basisFilterMethod' then this might as well use the other: 'posFilterMethod'
 							local connmid = math.mix(connk, nextConnK, f)
 							local dE = connmid:T() * emid
 							local XEmid = matrix{
@@ -1348,7 +1346,7 @@ print('*** comparing connections from create_gs / create whatever to create_conn
 	local com = matrix{n}:lambda([] 0)
 	for i in self.size:range() do
 		if self.Xs[i]:isfinite() then
-			com = com + self.Xs[i]
+			com += self.Xs[i]
 		end
 	end
 	com = com / self.size:prod()
@@ -1374,7 +1372,7 @@ print('*** comparing connections from create_gs / create whatever to create_conn
 		for k=1,n do
 			if index[k] < sizeMinusOne[k] then
 				local nextIndex = index:clone()
-				nextIndex[k] = nextIndex[k] + 1
+				nextIndex[k] += 1
 
 				local color = (index-1):ediv(sizeMinusOne)
 				colors:append{color[1] or 0, color[2] or 0, color[3] or .5}
@@ -1400,7 +1398,7 @@ print('*** comparing connections from create_gs / create whatever to create_conn
 			and index[k] < self.size[k]-1
 			then
 				local nextIndex = index:clone()
-				nextIndex[k] = nextIndex[k] + 1
+				nextIndex[k] += 1
 
 				local color = (index-1):ediv((self.size-1):map([x] math.max(x, 1) ))
 				colors:append{color[1] or 0, color[2] or 0, color[3] or .5}
@@ -1477,10 +1475,10 @@ end
 
 App.drawGrid = [:] do
 	local xmin, xmax, ymin, ymax = self.view:getBounds(self.width / self.height)
-	xmin = xmin + self.view.pos.x
-	ymin = ymin + self.view.pos.y
-	xmax = xmax + self.view.pos.x
-	ymax = ymax + self.view.pos.y
+	xmin += self.view.pos.x
+	ymin += self.view.pos.y
+	xmax += self.view.pos.x
+	ymax += self.view.pos.y
 
 	self.lineObj.uniforms.mvProjMat = self.view.mvProjMat.ptr
 	self.lineObj.uniforms.color = {.1, .1, .1}
