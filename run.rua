@@ -734,14 +734,14 @@ local geomClassNames = geomClassesForName:map([kv] ((next(kv))) )
 local GridFilter = class()
 GridFilter.init = [:, grid, min, max, size] do
 	self.grid = assert(grid)
-	self.min = assert(min)
-	self.max = assert(max)
-	self.size = assert(size)
+	self.min = assert(min):clone()
+	self.max = assert(max):clone()
+	self.size = assert(size):clone()
 end
 
 local NearestGridFilter = GridFilter:subclass()
 NearestGridFilter.__call = [:, app, x] do
-	local is = (x - self.min):ediv(self.max - self.min):emul(self.size) + 1
+	local is = (x - self.min):ediv(self.max - self.min):emul(self.size - 1) + 1
 	is = is:map([x,j] math.clamp(math.floor(x), 1, self.size[j]))
 	return self.grid[is]
 end
@@ -753,7 +753,7 @@ LinearGridFilter.__call = [:, app, x] do
 	local fs = is - is:map([x] math.floor(x))
 	for j=1,n do
 		is[j] = math.clamp(math.floor(is[j]), 1, self.size[j])
-		if is[j] == self.size[j] then fs[j] = 0 end
+		if is[j] == self.size[j] then fs[j] = 0 end	-- is this necessary?
 	end
 
 	-- n-linear interpolation
@@ -775,7 +775,7 @@ LinearGridFilter.__call = [:, app, x] do
 			end
 		end
 	end
-	return sum
+	return sum:clone()
 end
 
 local gridFilterMethods = {
@@ -829,7 +829,7 @@ App.buildSurface = [:, geomName] do
 	-- if the geometry doesn't have 'create_conns' then we must use finite-difference of metric
 	-- true = use g_uv for Conn_abc
 	-- false = use Conn_abc provided in geom.create_conns
-	self.calcConnFromMetric = not geom.create_conns
+	self.calcConnFromMetric = false	-- not geom.create_conns
 
 	-- true = use matrix-exp to calc P(x,y) from Conn_abc
 	-- false = use P(x,y) provided in geom.parallelPropagatorInvs
@@ -923,21 +923,28 @@ print('App:rebuildSurface...')
 	local integrator = select(2, next(self.integrationMethods[self.integrationMethod]))
 
 	self.conns = nil
+	self.Xs = nil
+	self.es = nil
+	self.getConn = nil
+	self.getParallelPropagatorInv = nil
+
+
+print('self.xs:norm()', self.xs:norm())
 
 	-- calculate Γ^a_bc := 1/2 inv(g_au) (Δ_c g_ub + Δ_b g_uc - Δ_u g_bc)
 	if self.calcConnFromMetric then
-
-		local gs, gUs, dgs
 		if not (geom.createMetric or geom.create_gs) then
 			print('!!! WARNING !!! createMetric / create_gs not provided by this geometry !!!')
 			return
 		end
+		
+		local gs
 print('creating metric...')
 		if geom.create_gs then
-print('creating metric numerically...')
+print('getting numerical metric from geom...')
 			gs = geom:create_gs()
 		elseif geom.calc.g then	-- should be there if createMetric is there ...
-print('creating metric analytically...')
+print('getting analytical metric from geom...')
 			gs = self.size:lambda([...] geom.calc.g(self.xs[{...}]))
 			-- TODO might as well compute g^ab analytically too ...
 		else
@@ -945,12 +952,16 @@ print('creating metric analytically...')
 			return
 		end
 
-		--or self.size:lambda([...] matrix{n,n}:eye() )
-print('creating metric inverse numerically...')
-		gUs = self.size:lambda([...] gs[{...}]:inv())
+print('gs:norm()', gs:norm())
 
-print('creating metric derivatives numerically...')
-		dgs = self.size:lambda([...] do
+		--or self.size:lambda([...] matrix{n,n}:eye() )
+print('numerically calculating metric inverse...')
+		local gUs = self.size:lambda([...] gs[{...}]:inv())
+
+print('gUs:norm()', gUs:norm())
+
+print('using finite-difference to calculate metric derivatives...')
+		local dgs = self.size:lambda([...] do
 			local i = matrix{...}
 			-- dg[a][b][c] := d/dx^a g_bc
 			local dg = matrix{n}:lambda([a] do
@@ -963,6 +974,8 @@ print('creating metric derivatives numerically...')
 			-- reshape dg_abc = g_ab,c
 			return matrix{n,n,n}:lambda([a,b,c] dg[c][a][b])
 		end)
+
+print('dgs norm', dgs:norm())
 
 print('creating connections numerically...')
 		self.conns = self.size:lambda([...] do
@@ -985,14 +998,15 @@ print('creating connections numerically...')
 			return
 		end
 
-print('creating connections numerically...')
+print('getting conns from geom...')
 		self.conns = geom:create_conns()
 	end
+
+print('self.conns:norm()', self.conns:norm())
 
 	self.getConn = gridFilterMethods[self.basisFilterMethod](self.conns, geom.xmin, geom.xmax, self.size)
 
 	-- use geom.parallelPropagatorInvs for parallel propagators
-	self.getParallelPropagatorInv = nil
 	if not self.calcPPFromConn then
 		if not geom.parallelPropagatorInvs then
 			print('!!! WARNING !!! parallelPropagatorInvs not provided by this geometry !!!')
@@ -1001,7 +1015,6 @@ print('creating connections numerically...')
 		self.getParallelPropagatorInv = [:, x, k, ds, nextIndex] do
 			return geom.parallelPropagatorInvs[k](ds, x:unpack())
 		end
-	
 	-- numerically calculate parallel-propagator from connection exp
 	else
 		self.getParallelPropagatorInv = [:, x, k, ds] do
@@ -1064,7 +1077,9 @@ print('creating connections numerically...')
 	self.es = self.size:lambda([...] matrix{n,n}:zeros())
 
 	local xInit = matrix(assert(geom.startCoord))
+print('x0:norm()', xInit:norm(), xInit)
 	local i = ((xInit - geom.xmin):ediv(geom.xmax - geom.xmin):emul(self.size-3) + 2.5):map(math.floor)
+print('i:norm()', i:norm(), i)	
 	for j=1,n do
 		if self.size[j] > 1 then
 			-- make sure we can finite-difference ... TODO this somewhere else, in the integration loop?
@@ -1074,8 +1089,14 @@ print('creating connections numerically...')
 		end
 		-- TODO reset the start coord in the GUI if it has to be clamped
 	end
+	
 	self.Xs[i] = geom.X0:clone()	-- geom:calcX0()	-- default zeroes
+print('geom.X0:norm()', geom.X0:norm())
+
 	self.es[i] = geom.e0:clone()	-- geom:calcE0()	-- default ident
+print('geom.e0:norm()', geom.e0:norm())
+
+--print(i, self.es[i]:unpack())
 	local withinEdge = [index,size] do
 		for i=1,n do
 			if index[i] <= 1 or index[i] >= size[i] then return false end
@@ -1090,7 +1111,9 @@ print'building surface...'
 	local sofar = {[tostring(index)] = true}
 	while #todo > 0 do
 		local index = todo:remove(1)
-		local conn = self.conns and self.conns[index] or nil
+		local x = self.xs[index]
+
+		local conn = self:getConn(x)
 --if not conn then error("failed to get conn at index "..tostring(index)) end
 		-- for each direction ...
 		for k=1,n do
@@ -1104,14 +1127,16 @@ print'building surface...'
 				if withinEdge(nextIndex, self.size)
 				and not sofar[tostring(nextIndex)]
 				then
-					local nextConnK = self.conns and self.conns[nextIndex](_,_,k) or nil
+					local xNext = self.xs[nextIndex]
+					local nextConnK = self:getConn(xNext)
 
 					-- cheating to get around anholonomic coordinate systems
 					-- technically I should be using commutation coefficients or something
 					-- or maybe this isn't cheating since we should be integrating by coordinate distances, which were normalized out in anholonomic basis ...
 					local len = 1
 					if geom.get_basis_lengths then
-						local lens = geom:get_basis_lengths(self.xs[index]:unpack())
+						-- how far in coordinate-space we need to integrate
+						local lens = geom:get_basis_lengths(x:unpack())
 						len = len * lens[k]
 					end
 
@@ -1145,10 +1170,16 @@ print'building surface...'
 						local XE = integrator(0, XEOrig, [s, XE] do
 							local emid = integrateBasis(eOrig, index, k, s, nextIndex, dir, connk, nextConnK)
 							local dX = emid[k]
+							--[[ interpolate here
 							local f = self.posFilterMethod == 2 and s / ds or 0	
 								-- since we're integrating the two together, I can't easily separate the two anymore, 
 								-- but if 'integrateBasis' is going to use 'basisFilterMethod' then this might as well use the other: 'posFilterMethod'
 							local connmid = math.mix(connk, nextConnK, f)
+							--]]
+							-- [[ use the grid
+							local xmid = math.mix(x, xNext, ds == 0 and 0 or s / ds) 
+							local connmid = self:getConn(xmid)
+							--]]
 							local dE = connmid:T() * emid
 							local XEmid = matrix{
 								dX,
@@ -1306,7 +1337,7 @@ print('index='..index)
 --print('self.dx='..self.dx)
 print('nextIndex='..nextIndex)
 print('ds='..ds)
-print('x='..self.xs[index])
+print('x='..x)
 print('conn[k]='..connk)
 print('XOrig='..XOrig)
 print('X='..X)
@@ -1315,6 +1346,7 @@ print('e='..e)
 --]]
 
 					self.es[nextIndex] = e
+--print(nextIndex, self.es[nextIndex]:unpack())
 					self.Xs[nextIndex] = X
 
 --print('e2 from '..eOrig(_,2)..' to '..e(_,2)..' changing by '..(eOrig(_,2) - e(_,2)):norm())
@@ -1342,6 +1374,8 @@ print('e='..e)
 print('*** comparing connections from create_gs / create whatever to create_conns ***')
 		geom:testExact()
 	end
+print('self.Xs:norm()', self.Xs:norm())
+print('self.es:norm()', self.es:norm())
 
 	local com = matrix{n}:lambda([] 0)
 	for i in self.size:range() do
@@ -1350,17 +1384,10 @@ print('*** comparing connections from create_gs / create whatever to create_conn
 		end
 	end
 	com = com / self.size:prod()
-	--[[ recenter ...
-	for i in self.size:range() do
-		self.Xs[i] = self.Xs[i] - com
-	end
-	--]]
-	-- [[ instead ... just recenter the view
 	for i=1,n do
 		self.view.pos.s[i-1] = -com[i]
 		self.view.orbit.s[i-1] = -com[i]
 	end
-	--]]
 
 	local vertexes = table()
 	local vertex2s = table()
@@ -1640,7 +1667,7 @@ App.updateGUI = [:] do
 		if ig.luatableCheckbox('use numerical propagators', self, 'calcPPFromConn') then
 			self:rebuildSurface()
 		end
-		if ig.luatableCheckbox('propagate basis', self, 'integrateEWithPP') then
+		if ig.luatableCheckbox('propagate basis (vs integrate)', self, 'integrateEWithPP') then
 			self:rebuildSurface()
 		end
 
