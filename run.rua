@@ -9,6 +9,25 @@ local vec3d = require 'vec-ffi.vec3d'
 local GLSceneObject = require 'gl.sceneobject'
 local gnuplot = require 'gnuplot'
 
+--[[ debugging floats ...
+local origprint = print
+local print = [...] do
+	local dtmp = ffi.new'double[1]'
+	for i=1,select('#', ...) do
+		local x = select(i, ...)
+		if i > 1 then io.write'\t' end
+		if type(x) == 'number' then
+			io.write(x)
+			dtmp[0] = x
+			io.write('[0x', ('%x'):format(ffi.cast('uint64_t*', dtmp)[0]), ']')
+		else
+			io.write(tostring(x))
+		end
+	end
+	print()
+end
+--]]
+
 --[[
 local CLEnv = require 'cl.obj.env'
 --]]
@@ -918,7 +937,12 @@ print('App:rebuildSurface...')
 	--]]
 	-- [[ vertex centered, excluding borders, so position 2,2 is at xmin (useful for centering the corner vertex)
 	self.dx = matrix{n}:ones():emul(geom.xmax - geom.xmin):ediv(self.size-3)
+--print('self.size', self.size:unpack())
+--print('self.dx', self.dx:unpack())
+--print('geom.xmin', geom.xmin:unpack())
+--print('geom.xmax', geom.xmax:unpack())
 	self.xs = self.size:lambda([...] ((matrix{...} - 2):emul(self.dx) + geom.xmin) )
+--print('self.xs:norm()', self.xs:norm())
 
 	local integrator = select(2, next(self.integrationMethods[self.integrationMethod]))
 
@@ -929,15 +953,13 @@ print('App:rebuildSurface...')
 	self.getParallelPropagatorInv = nil
 
 
-print('self.xs:norm()', self.xs:norm())
-
 	-- calculate Γ^a_bc := 1/2 inv(g_au) (Δ_c g_ub + Δ_b g_uc - Δ_u g_bc)
 	if self.calcConnFromMetric then
 		if not (geom.createMetric or geom.create_gs) then
 			print('!!! WARNING !!! createMetric / create_gs not provided by this geometry !!!')
 			return
 		end
-		
+
 		local gs
 print('creating metric...')
 		if geom.create_gs then
@@ -952,13 +974,13 @@ print('getting analytical metric from geom...')
 			return
 		end
 
-print('gs:norm()', gs:norm())
+--print('gs:norm()', gs:norm())
 
 		--or self.size:lambda([...] matrix{n,n}:eye() )
 print('numerically calculating metric inverse...')
 		local gUs = self.size:lambda([...] gs[{...}]:inv())
 
-print('gUs:norm()', gUs:norm())
+--print('gUs:norm()', gUs:norm())
 
 print('using finite-difference to calculate metric derivatives...')
 		local dgs = self.size:lambda([...] do
@@ -975,7 +997,7 @@ print('using finite-difference to calculate metric derivatives...')
 			return matrix{n,n,n}:lambda([a,b,c] dg[c][a][b])
 		end)
 
-print('dgs norm', dgs:norm())
+--print('dgs norm', dgs:norm())
 
 print('creating connections numerically...')
 		self.conns = self.size:lambda([...] do
@@ -1002,7 +1024,7 @@ print('getting conns from geom...')
 		self.conns = geom:create_conns()
 	end
 
-print('self.conns:norm()', self.conns:norm())
+--print('self.conns:norm()', self.conns:norm())
 
 	self.getConn = gridFilterMethods[self.basisFilterMethod](self.conns, geom.xmin, geom.xmax, self.size)
 
@@ -1022,7 +1044,7 @@ print('self.conns:norm()', self.conns:norm())
 			local x2 = x:clone()
 			x2[k] += ds
 			local connkMid = self:getConn(x2)(_,_,k)
-		
+
 			-- now we want to calculate P(x,x+dxk) = exp(int(conn_k from x to x+dxk))
 			-- so first we want to integrate from connk to connkMid along ds ...
 			-- next we want to exponent the integral
@@ -1058,7 +1080,7 @@ print('self.conns:norm()', self.conns:norm())
 				--]]
 			end, ds)
 		end
-	else	
+	else
 		integrateBasis = [e, index, k, ds
 			, nextIndex, dir, connk, nextConnK	-- not used for this one?
 		] do
@@ -1076,25 +1098,28 @@ print('self.conns:norm()', self.conns:norm())
 	-- rows of es = components of the basis vectors in the embedded Cartesian space
 	self.es = self.size:lambda([...] matrix{n,n}:zeros())
 
-	local xInit = matrix(assert(geom.startCoord))
-print('x0:norm()', xInit:norm(), xInit)
-	local i = ((xInit - geom.xmin):ediv(geom.xmax - geom.xmin):emul(self.size-3) + 2.5):map(math.floor)
-print('i:norm()', i:norm(), i)	
-	for j=1,n do
-		if self.size[j] > 1 then
-			-- make sure we can finite-difference ... TODO this somewhere else, in the integration loop?
-			i[j] = math.clamp(i[j], 2, self.size[j]-1)
-		else
-			i[j] = 1
+	local index0
+	do
+		local xInit = matrix(assert(geom.startCoord))
+--print('x0:norm()', xInit:norm(), xInit)
+		index0 = ((xInit - geom.xmin):ediv(geom.xmax - geom.xmin):emul(self.size-3) + 2.5):map(math.floor)
+--print('index0', index0)
+		for j=1,n do
+			if self.size[j] > 1 then
+				-- make sure we can finite-difference ... TODO this somewhere else, in the integration loop?
+				index0[j] = math.clamp(index0[j], 2, self.size[j]-1)
+			else
+				index0[j] = 1
+			end
+			-- TODO reset the start coord in the GUI if it has to be clamped
 		end
-		-- TODO reset the start coord in the GUI if it has to be clamped
-	end
-	
-	self.Xs[i] = geom.X0:clone()	-- geom:calcX0()	-- default zeroes
-print('geom.X0:norm()', geom.X0:norm())
 
-	self.es[i] = geom.e0:clone()	-- geom:calcE0()	-- default ident
-print('geom.e0:norm()', geom.e0:norm())
+		self.Xs[index0] = geom.X0:clone()	-- geom:calcX0()	-- default zeroes
+--print('geom.X0:norm()', geom.X0:norm())
+
+		self.es[index0] = geom.e0:clone()	-- geom:calcE0()	-- default ident
+--print('geom.e0:norm()', geom.e0:norm())
+	end
 
 --print(i, self.es[i]:unpack())
 	local withinEdge = [index,size] do
@@ -1107,7 +1132,7 @@ print('geom.e0:norm()', geom.e0:norm())
 print'building surface...'
 	-- now to reconstruct the es based on the conns ...
 	-- [=[ flood fill
-	local todo = table{i}
+	local todo = table{index0}
 	local sofar = {[tostring(index)] = true}
 	while #todo > 0 do
 		local index = todo:remove(1)
@@ -1171,13 +1196,13 @@ print'building surface...'
 							local emid = integrateBasis(eOrig, index, k, s, nextIndex, dir, connk, nextConnK)
 							local dX = emid[k]
 							--[[ interpolate here
-							local f = self.posFilterMethod == 2 and s / ds or 0	
-								-- since we're integrating the two together, I can't easily separate the two anymore, 
+							local f = self.posFilterMethod == 2 and s / ds or 0
+								-- since we're integrating the two together, I can't easily separate the two anymore,
 								-- but if 'integrateBasis' is going to use 'basisFilterMethod' then this might as well use the other: 'posFilterMethod'
 							local connmid = math.mix(connk, nextConnK, f)
 							--]]
 							-- [[ use the grid
-							local xmid = math.mix(x, xNext, ds == 0 and 0 or s / ds) 
+							local xmid = math.mix(x, xNext, ds == 0 and 0 or s / ds)
 							local connmid = self:getConn(xmid)
 							--]]
 							local dE = connmid:T() * emid
@@ -1374,8 +1399,8 @@ print('e='..e)
 print('*** comparing connections from create_gs / create whatever to create_conns ***')
 		geom:testExact()
 	end
-print('self.Xs:norm()', self.Xs:norm())
-print('self.es:norm()', self.es:norm())
+--print('self.Xs:norm()', self.Xs:norm())
+--print('self.es:norm()', self.es:norm())
 
 	local com = matrix{n}:lambda([] 0)
 	for i in self.size:range() do
