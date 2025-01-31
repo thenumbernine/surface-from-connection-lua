@@ -265,7 +265,7 @@ Polar.xmin = matrix{1, 0}
 Polar.xmax = matrix{10, 2 * math.pi}
 Polar.startCoord = {1,0}
 --]]
---[[ applying a rotation, e=I at r=1 and theta!=0 still produces the same shape.
+--[[ applying a rotation, e=I at r=1 and phi!=0 still produces the same shape.
 Polar.xmin = matrix{1, 0}
 Polar.xmax = matrix{10, 2 * math.pi}
 Polar.startCoord = {1, math.pi/2}
@@ -288,12 +288,12 @@ Polar.exactBasis = [:, r, phi] do
 	local c = math.cos(phi)
 	local s = math.sin(phi)
 	return matrix{
-		{c, s},
-		{r * -s, r * c}
+		{c, s},				-- e_r
+		{r * -s, r * c}     -- e_φ
 	}
 end
 Polar.createMetric = [:] do
-	local r, theta = self.coordVars:unpack()
+	local r, phi= self.coordVars:unpack()
 	return symmath.Tensor('_ab', {1, 0}, {0, r^2})
 end
 --]]
@@ -301,8 +301,8 @@ end
 -- ... if this and create_gs/createMetric is enabled then this is only used to calculate numerical error of connections
 Polar.create_conns = [:]
 	self.app.size:lambda([...] do
-		local r, theta = self.app.xs[{...}]:unpack()
-		-- 1/Γ^θ_θr = 1/Γ^θ_rθ = -Γ^r_θθ = r
+		local r, phi = self.app.xs[{...}]:unpack()
+		-- 1/Γ^φ_φr = 1/Γ^φ_rφ = -Γ^r_φφ = r
 		return matrix{
 			{
 				{0, 0},
@@ -351,12 +351,44 @@ PolarAnholonomic.startCoord = {1,0}
 PolarAnholonomic.create_conns = [:]
 	self.app.size:lambda([i,j] do
 		local r = self.app.xs[i][j][1]
-		-- Γ^θ_rθ = -Γ^r_θθ = 1/r
+		-- Γ^φ_rφ = -Γ^r_φφ = 1/r
 		return matrix{ {{0,0},{0,-1/r}}, {{0,1/r},{0,0}} }
 	end)
 -- if you can get the lengths holonomic basis' vectors then reconstructing the original shape is much easier
-PolarAnholonomic.get_basis_lengths = [:, r, theta] matrix{1, r}
-
+PolarAnholonomic.get_basis_lengths = [:, r, phi] matrix{1, r}
+PolarAnholonomic.exactChart = [:, r, phi] do
+	return matrix{r * math.cos(phi), r * math.sin(phi)}
+end
+PolarAnholonomic.exactBasis = [:, r, phi] do
+	local c = math.cos(phi)
+	local s = math.sin(phi)
+	return matrix{
+		{c, s},		-- e_r
+		{-s, c}		-- e_φ
+	}
+end
+PolarAnholonomic.parallelPropagatorInvs = {
+	-- propagating along r ...
+	([dr, r, phi] do
+		return matrix{
+			{1, 0},
+			{0, 1}
+		}
+	end),
+	-- propagating along φ ...
+	-- ok 2 ways to do this ...
+	-- 1) consider exp of the anholonomic connection, then we have to factor in the 1/r
+	-- 2) only propagate the *coordinate* index, meaning we have to transform by 'e' before applying exp(conn)
+	-- for now I'm doing #1 because I'm lazy ... but #2 is more mathematically correct ... but that requires tracking holonomic vs anholonomic e's ... the 'get_basis_length' is sort of a way between them ...
+	([dphi, r, phi] do
+		local cos_dphi = math.cos(dphi / r)	-- divide by 'r' because see #1 above
+		local sin_dphi = math.sin(dphi / r)
+		return matrix{
+			{cos_dphi, -sin_dphi},
+			{sin_dphi, cos_dphi}
+		}
+	end),
+}
 
 -- cyl surface can't be reconstructed
 -- because it needs extrinsic curvature information
@@ -1069,12 +1101,12 @@ print('comparing index', index, 'x', self.xs[index])
 				print('!!! WARNING !!! parallelPropagatorInvs not provided by this geometry !!!')
 				return
 			end
-			self.getParallelPropagatorInv = [:, x, k, ds] do
+			self.getParallelPropagatorInv = [:, k, ds, x] do
 				return geom.parallelPropagatorInvs[k](ds, x:unpack())
 			end
 		-- numerically calculate parallel-propagator from connection exp
 		else
-			self.getParallelPropagatorInv = [:, x, k, ds] do
+			self.getParallelPropagatorInv = [:, k, ds, x] do
 				local connk = self:getConn(x)(_,_,k)
 				local x2 = x:clone()
 				x2[k] += ds
@@ -1088,7 +1120,7 @@ print('comparing index', index, 'x', self.xs[index])
 		end
 
 		integrateBasis = [e, x, k, ds] do
-			local propInv_k = self:getParallelPropagatorInv(x, k, ds)
+			local propInv_k = self:getParallelPropagatorInv(k, ds, x)
 			return matrix{n}:lambda([i]
 				propInv_k:T() * e(_,i)
 			):T()
@@ -1167,7 +1199,7 @@ print'building surface...'
 					-- cheating to get around anholonomic coordinate systems
 					-- technically I should be using commutation coefficients or something
 					-- or maybe this isn't cheating since we should be integrating by coordinate distances, which were normalized out in anholonomic basis ...
-					-- 'len' should be the transform from local-minkowski to the coordinate basis 
+					-- 'len' should be the transform from local-minkowski to the coordinate basis
 					local len = 1
 					if geom.get_basis_lengths then
 						-- how far in coordinate-space we need to integrate
@@ -1194,7 +1226,7 @@ print'building surface...'
 							)
 						end, ds)
 						--]]
-						-- [=[ integrate both at the same time for better accuracy ...
+						-- [=[ integrate e and X at the same time for better accuracy ...
 						-- for polar holonomic, X error <= 0.22228580818733, e error <= 0.22455744144822
 						local XEOrig = matrix{
 							XOrig,
@@ -1233,7 +1265,7 @@ print'building surface...'
 						-- if d/ds e = conn e then ...
 						-- then we can solve this as a linear dynamic system!
 						-- even though this assumes conn is constant (which it's not)
-						-- for constant connections (like integrating polar coordinates around theta) this is no problem
+						-- for constant connections (like integrating polar coordinates around phi) this is no problem
 						-- de/e = conn ds
 						-- e = C exp(conn s) = C Q exp(λ s) Q^-1
 						--
