@@ -751,50 +751,62 @@ local geomClassesForName = table{
 local geomClassNames = geomClassesForName:map([kv] ((next(kv))) )
 
 local GridFilter = class()
-GridFilter.init = [:, grid, min, max, size] do
+GridFilter.init = [:, grid, xmin, xmax, size] do
 	self.grid = assert(grid)
-	self.min = assert(min):clone()
-	self.max = assert(max):clone()
+	self.xmin = assert(xmin):clone()
+	self.xmax = assert(xmax):clone()
 	self.size = assert(size):clone()
+	local n = #self.size
+	self.zero = self.grid[matrix{n}:lambda([] 1)]:map([] 0)
 end
 
 local NearestGridFilter = GridFilter:subclass()
 NearestGridFilter.__call = [:, app, x] do
-	local is = (x - self.min):ediv(self.max - self.min):emul(self.size - 1) + 1
+	local is = (x - self.xmin):ediv(self.xmax - self.xmin):emul(self.size - 1) + 1
 	is = is:map([x,j] math.clamp(math.floor(x), 1, self.size[j]))
-	return self.grid[is]
+	return assert(self.grid[is]):clone()
 end
 
 local LinearGridFilter = GridFilter:subclass()
 LinearGridFilter.__call = [:, app, x] do
+--print()
+--print('x', x, 'xmin', self.xmin, 'xmax', self.xmax)
 	local n = #self.size
-	local is = (x - self.min):ediv(self.max - self.min):emul(self.size - 1) + 1
+
+	-- vertex-centered with [2,2] at xmin, and [size-1] at xmax
+	-- this should match the dx xmin xmax calculations in :rebuildGeometry()
+	local is = (x - self.xmin):ediv(self.xmax - self.xmin):emul(self.size - 3) + 2
+
 	local fs = is - is:map([x] math.floor(x))
 	for j=1,n do
 		is[j] = math.clamp(math.floor(is[j]), 1, self.size[j])
 		if is[j] == self.size[j] then fs[j] = 0 end	-- is this necessary?
 	end
 
+--for j=1,n do assert.le(0, fs[j]) assert.le(fs[j], 1) end
+--print('is', is, 'fs', fs)
+
 	-- n-linear interpolation
-	local sum
+	local sum = self.zero:clone()
 	for cornerBits = 0,(1<<n)-1 do
 		local cis = is:clone()
 		local coeff = 1
 		for j=1,n do
 			local has = (cornerBits >> (j-1)) & 1
 			cis[j] += has
-			coeff *= has == 0 and (1 - fs[j]) or fs[j]
-		end
-		if coeff > 0 then
-			local cornerValue = self.grid[cis]
-			if not sum then
-				sum = cornerValue * coeff
+			if has == 0 then
+				coeff *= 1 - fs[j]
 			else
-				sum += cornerValue * coeff
+				coeff *= fs[j]
 			end
 		end
+--print('cornerBits', cornerBits, 'coeff', coeff, 'cis', cis)
+		if coeff > 0 then
+			sum += self.grid[cis] * coeff
+		end
 	end
-	return sum:clone()
+--print('sum', sum)
+	return sum
 end
 
 local gridFilterMethods = {
@@ -936,7 +948,7 @@ print('App:rebuildSurface...')
 	self.xs = self.size:lambda([...] ((matrix{...} - .5):emul(self.dx) + geom.xmin) )
 	--]]
 	-- [[ vertex centered, excluding borders, so position 2,2 is at xmin (useful for centering the corner vertex)
-	self.dx = matrix{n}:ones():emul(geom.xmax - geom.xmin):ediv(self.size-3)
+	self.dx = matrix{n}:ones():emul(geom.xmax - geom.xmin):ediv(self.size - 3)
 --print('self.size', self.size:unpack())
 --print('self.dx', self.dx:unpack())
 --print('geom.xmin', geom.xmin:unpack())
@@ -1026,31 +1038,14 @@ print('getting conns from geom...')
 
 --print('self.conns:norm()', self.conns:norm())
 
+	-- TODO geom.calc.Conn for analytical connection without any kind of grid filtering
 	self.getConn = gridFilterMethods[self.basisFilterMethod](self.conns, geom.xmin, geom.xmax, self.size)
-
-	-- use geom.parallelPropagatorInvs for parallel propagators
-	if not self.calcPPFromConn then
-		if not geom.parallelPropagatorInvs then
-			print('!!! WARNING !!! parallelPropagatorInvs not provided by this geometry !!!')
-			return
-		end
-		self.getParallelPropagatorInv = [:, x, k, ds, nextIndex] do
-			return geom.parallelPropagatorInvs[k](ds, x:unpack())
-		end
-	-- numerically calculate parallel-propagator from connection exp
-	else
-		self.getParallelPropagatorInv = [:, x, k, ds] do
-			local connk = self:getConn(x)(_,_,k)
-			local x2 = x:clone()
-			x2[k] += ds
-			local connkMid = self:getConn(x2)(_,_,k)
-
-			-- now we want to calculate P(x,x+dxk) = exp(int(conn_k from x to x+dxk))
-			-- so first we want to integrate from connk to connkMid along ds ...
-			-- next we want to exponent the integral
-			error'TODO'
-		end
+--[[ verify lookup works
+	for index in self.size:range() do
+print('comparing index', index, 'x', self.xs[index])
+		assert.eqeps(self.conns[index]:norm(), self:getConn(self.xs[index]):norm(), 1e-7)
 	end
+--]]
 
 	-- if we are calculating the connection from discrete derivatives of the metric ...
 	local integrateBasis
@@ -1062,14 +1057,16 @@ print('getting conns from geom...')
 		-- ... or i could waste cycles and do ...
 		-- ... x = coordinate location
 		-- ... dx = change-in-coordinate
-		integrateBasis = [e, index, k, ds, nextIndex, dir, connk, nextConnK] do
+		integrateBasis = [e, index, k, ds
+			, nextIndex, dir, connk, nextConnK	-- getting rid of these if I can ...
+		] do
 			return integrator(0, e, [s, e] do
-				--[[ using the grid filter abstraction ...
+				-- [[ using the grid filter abstraction ...
 				local x = self.xs[index]:clone()
-				x[k] += ds
+				x[k] += s
 				return self:getConn(x)(_,_,k):T() * e
 				--]]
-				-- [[ integrating the conn from numerical finite difference
+				--[[ integrating the conn from numerical finite difference
 				local f = self.basisFilterMethod == 2 and (ds == 0 and 0 or s / ds) or 0
 				return math.mix(connk, nextConnK, f):T() * e
 				--]]
@@ -1081,6 +1078,31 @@ print('getting conns from geom...')
 			end, ds)
 		end
 	else
+
+		-- use geom.parallelPropagatorInvs for parallel propagators
+		if not self.calcPPFromConn then
+			if not geom.parallelPropagatorInvs then
+				print('!!! WARNING !!! parallelPropagatorInvs not provided by this geometry !!!')
+				return
+			end
+			self.getParallelPropagatorInv = [:, x, k, ds, nextIndex] do
+				return geom.parallelPropagatorInvs[k](ds, x:unpack())
+			end
+		-- numerically calculate parallel-propagator from connection exp
+		else
+			self.getParallelPropagatorInv = [:, x, k, ds] do
+				local connk = self:getConn(x)(_,_,k)
+				local x2 = x:clone()
+				x2[k] += ds
+				local connkMid = self:getConn(x2)(_,_,k)
+
+				-- now we want to calculate P(x,x+dxk) = exp(int(conn_k from x to x+dxk))
+				-- so first we want to integrate from connk to connkMid along ds ...
+				-- next we want to exponent the integral
+				error'TODO'
+			end
+		end
+
 		integrateBasis = [e, index, k, ds
 			, nextIndex, dir, connk, nextConnK	-- not used for this one?
 		] do
@@ -1138,12 +1160,18 @@ print'building surface...'
 		local index = todo:remove(1)
 		local x = self.xs[index]
 
+		-- [[
 		local conn = self:getConn(x)
+		--]]
+		--[[
+		local conn = self.conns[index]
+		--]]
+
 --if not conn then error("failed to get conn at index "..tostring(index)) end
 		-- for each direction ...
 		for k=1,n do
 			-- TODO why not store the coordinate index first?
-			local connk = conn and conn(_,_,k) or nil
+			local connk = conn(_,_,k)
 
 			for dir=-1,1,2 do
 				local nextIndex = index:clone()
@@ -1153,7 +1181,12 @@ print'building surface...'
 				and not sofar[tostring(nextIndex)]
 				then
 					local xNext = self.xs[nextIndex]
-					local nextConnK = self:getConn(xNext)
+					-- [[
+					local nextConnK = self:getConn(xNext)(_,_,k)
+					--]]
+					--[[
+					local nextConnK = self.conns[nextIndex](_,_,k)
+					--]]
 
 					-- cheating to get around anholonomic coordinate systems
 					-- technically I should be using commutation coefficients or something
@@ -1184,14 +1217,14 @@ print'building surface...'
 							)
 						end, ds)
 						--]]
-						-- [[ integrate both at the same time for better accuracy ...
+						-- [=[ integrate both at the same time for better accuracy ...
 						-- for polar holonomic, X error <= 0.22228580818733, e error <= 0.22455744144822
 						local XEOrig = matrix{
 							XOrig,
 							eOrig:unpack()
 						}
 						--dXE of the X is e[k]
-						--dXE of the e is conn[_,k,_] ... or it's the negative transpose of the conn ...
+						--dXE of the e is conn[_,_,k] ... or it's the negative transpose of the conn ...
 						local XE = integrator(0, XEOrig, [s, XE] do
 							local emid = integrateBasis(eOrig, index, k, s, nextIndex, dir, connk, nextConnK)
 							local dX = emid[k]
@@ -1203,7 +1236,7 @@ print'building surface...'
 							--]]
 							-- [[ use the grid
 							local xmid = math.mix(x, xNext, ds == 0 and 0 or s / ds)
-							local connmid = self:getConn(xmid)
+							local connmid = self:getConn(xmid)(_,_,k)
 							--]]
 							local dE = connmid:T() * emid
 							local XEmid = matrix{
@@ -1214,7 +1247,7 @@ print'building surface...'
 						end, ds)
 						X = table.remove(XE, 1)
 						e = XE
-						--]]
+						--]=]
 					else
 						-- propagate e, use mid-propagated e's to integrate X
 						-- for polar holonomic, X error <= 0.00037882000703206, e error <= 5.1265983257016e-15
@@ -1686,10 +1719,10 @@ App.updateGUI = [:] do
 		end
 		ig.igPopID()
 
-		if ig.luatableCheckbox('use numeric conns', self, 'calcConnFromMetric') then
+		if ig.luatableCheckbox('use finite-difference-metric conn (vs provided)', self, 'calcConnFromMetric') then
 			self:rebuildSurface()
 		end
-		if ig.luatableCheckbox('use numerical propagators', self, 'calcPPFromConn') then
+		if ig.luatableCheckbox('use matrix-exp-conn propagator (vs provided)', self, 'calcPPFromConn') then
 			self:rebuildSurface()
 		end
 		if ig.luatableCheckbox('propagate basis (vs integrate)', self, 'integrateEWithPP') then
