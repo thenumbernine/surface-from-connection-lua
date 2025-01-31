@@ -762,7 +762,7 @@ end
 
 local NearestGridFilter = GridFilter:subclass()
 NearestGridFilter.__call = [:, app, x] do
-	local is = (x - self.xmin):ediv(self.xmax - self.xmin):emul(self.size - 1) + 1
+	local is = (x - self.xmin):ediv(self.xmax - self.xmin):emul(self.size - 3) + 2.5
 	is = is:map([x,j] math.clamp(math.floor(x), 1, self.size[j]))
 	return assert(self.grid[is]):clone()
 end
@@ -1051,30 +1051,14 @@ print('comparing index', index, 'x', self.xs[index])
 	local integrateBasis
 	if not self.integrateEWithPP then
 		-- e = basis matrix ... are rows or cols the basis forms?
-		-- i = lattice index
+		-- x = chart coordinates
 		-- k = which dimension we're moving along
-		-- dir = forward or backwards on the lattice
-		-- ... or i could waste cycles and do ...
-		-- ... x = coordinate location
-		-- ... dx = change-in-coordinate
-		integrateBasis = [e, index, k, ds
-			, nextIndex, dir, connk, nextConnK	-- getting rid of these if I can ...
-		] do
+		-- ds = amount we're moving along the k'th coordinate
+		integrateBasis = [e, x, k, ds] do
 			return integrator(0, e, [s, e] do
-				-- [[ using the grid filter abstraction ...
-				local x = self.xs[index]:clone()
+				x = x:clone()
 				x[k] += s
 				return self:getConn(x)(_,_,k):T() * e
-				--]]
-				--[[ integrating the conn from numerical finite difference
-				local f = self.basisFilterMethod == 2 and (ds == 0 and 0 or s / ds) or 0
-				return math.mix(connk, nextConnK, f):T() * e
-				--]]
-				--[[ integrating the analytical conn
-				local x = self.xs[index]
-				local xNext = self.xs[nextIndex]
-				return geom.calc.Conn( (x * s + xNext * (ds - s)) / ds  )(_,k):T() * e
-				--]]
 			end, ds)
 		end
 	else
@@ -1085,7 +1069,7 @@ print('comparing index', index, 'x', self.xs[index])
 				print('!!! WARNING !!! parallelPropagatorInvs not provided by this geometry !!!')
 				return
 			end
-			self.getParallelPropagatorInv = [:, x, k, ds, nextIndex] do
+			self.getParallelPropagatorInv = [:, x, k, ds] do
 				return geom.parallelPropagatorInvs[k](ds, x:unpack())
 			end
 		-- numerically calculate parallel-propagator from connection exp
@@ -1103,10 +1087,8 @@ print('comparing index', index, 'x', self.xs[index])
 			end
 		end
 
-		integrateBasis = [e, index, k, ds
-			, nextIndex, dir, connk, nextConnK	-- not used for this one?
-		] do
-			local propInv_k = self:getParallelPropagatorInv(self.xs[index], k, ds)
+		integrateBasis = [e, x, k, ds] do
+			local propInv_k = self:getParallelPropagatorInv(x, k, ds)
 			return matrix{n}:lambda([i]
 				propInv_k:T() * e(_,i)
 			):T()
@@ -1181,16 +1163,11 @@ print'building surface...'
 				and not sofar[tostring(nextIndex)]
 				then
 					local xNext = self.xs[nextIndex]
-					-- [[
-					local nextConnK = self:getConn(xNext)(_,_,k)
-					--]]
-					--[[
-					local nextConnK = self.conns[nextIndex](_,_,k)
-					--]]
 
 					-- cheating to get around anholonomic coordinate systems
 					-- technically I should be using commutation coefficients or something
 					-- or maybe this isn't cheating since we should be integrating by coordinate distances, which were normalized out in anholonomic basis ...
+					-- 'len' should be the transform from local-minkowski to the coordinate basis 
 					local len = 1
 					if geom.get_basis_lengths then
 						-- how far in coordinate-space we need to integrate
@@ -1208,7 +1185,7 @@ print'building surface...'
 					if not self.integrateEWithPP then
 						--[[ integrate e then X ...
 						-- for polar holonomic, X error <= 0.38936524475501, e error <= 0.38171956061742
-						e = integrateBasis(eOrig, index, k, ds, nextIndex, dir, connk, nextConnK)
+						e = integrateBasis(eOrig, x, k, ds, nextIndex, dir, connk)
 						X = integrator(0, XOrig, [s, X] do
 							return math.mix(
 								eOrig[k],
@@ -1226,18 +1203,10 @@ print'building surface...'
 						--dXE of the X is e[k]
 						--dXE of the e is conn[_,_,k] ... or it's the negative transpose of the conn ...
 						local XE = integrator(0, XEOrig, [s, XE] do
-							local emid = integrateBasis(eOrig, index, k, s, nextIndex, dir, connk, nextConnK)
+							local emid = integrateBasis(eOrig, x, k, s)
 							local dX = emid[k]
-							--[[ interpolate here
-							local f = self.posFilterMethod == 2 and s / ds or 0
-								-- since we're integrating the two together, I can't easily separate the two anymore,
-								-- but if 'integrateBasis' is going to use 'basisFilterMethod' then this might as well use the other: 'posFilterMethod'
-							local connmid = math.mix(connk, nextConnK, f)
-							--]]
-							-- [[ use the grid
 							local xmid = math.mix(x, xNext, ds == 0 and 0 or s / ds)
 							local connmid = self:getConn(xmid)(_,_,k)
-							--]]
 							local dE = connmid:T() * emid
 							local XEmid = matrix{
 								dX,
@@ -1251,9 +1220,9 @@ print'building surface...'
 					else
 						-- propagate e, use mid-propagated e's to integrate X
 						-- for polar holonomic, X error <= 0.00037882000703206, e error <= 5.1265983257016e-15
-						e = integrateBasis(eOrig, index, k, ds, nextIndex, dir, connk, nextConnK)
+						e = integrateBasis(eOrig, x, k, ds)
 						X = integrator(0, XOrig, [s, X] do
-							local emid = integrateBasis(eOrig, index, k, s, nextIndex, dir, connk, nextConnK)
+							local emid = integrateBasis(eOrig, x, k, s)
 							return emid[k]
 						end, ds)
 					end
