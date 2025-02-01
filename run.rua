@@ -2,6 +2,7 @@
 local ig = require 'imgui'
 local gl = require 'gl'
 local matrix = require 'matrix'
+local matrix_ffi = require 'matrix.ffi'
 local symmath = require 'symmath'
 local ffi = require 'ffi'
 local vec3f = require 'vec-ffi.vec3f'
@@ -348,14 +349,6 @@ PolarAnholonomic.coords = {'r', 'φ'}
 PolarAnholonomic.xmin = matrix{1, 0}
 PolarAnholonomic.xmax = matrix{10, 2 * math.pi}
 PolarAnholonomic.startCoord = {1,0}
-PolarAnholonomic.create_conns = [:]
-	self.app.size:lambda([i,j] do
-		local r = self.app.xs[i][j][1]
-		-- Γ^φ_rφ = -Γ^r_φφ = 1/r
-		return matrix{ {{0,0},{0,-1/r}}, {{0,1/r},{0,0}} }
-	end)
--- if you can get the lengths holonomic basis' vectors then reconstructing the original shape is much easier
-PolarAnholonomic.get_basis_lengths = [:, r, phi] matrix{1, r}
 PolarAnholonomic.exactChart = [:, r, phi] do
 	return matrix{r * math.cos(phi), r * math.sin(phi)}
 end
@@ -367,6 +360,17 @@ PolarAnholonomic.exactBasis = [:, r, phi] do
 		{-s, c}		-- e_φ
 	}
 end
+PolarAnholonomic.create_conns = [:]
+	self.app.size:lambda([i,j] do
+		local r = self.app.xs[i][j][1]
+		-- Γ^φ_rφ = -Γ^r_φφ = 1/r
+		return matrix{
+			{{0, 0}, {0, -1/r}},
+			{{0, 1/r}, {0, 0}}
+		}
+	end)
+-- if you can get the lengths holonomic basis' vectors then reconstructing the original shape is much easier
+PolarAnholonomic.get_basis_lengths = [:, r, phi] matrix{1, r}
 PolarAnholonomic.parallelPropagatorInvs = {
 	-- propagating along r ...
 	([dr, r, phi] do
@@ -381,8 +385,9 @@ PolarAnholonomic.parallelPropagatorInvs = {
 	-- 2) only propagate the *coordinate* index, meaning we have to transform by 'e' before applying exp(conn)
 	-- for now I'm doing #1 because I'm lazy ... but #2 is more mathematically correct ... but that requires tracking holonomic vs anholonomic e's ... the 'get_basis_length' is sort of a way between them ...
 	([dphi, r, phi] do
-		local cos_dphi = math.cos(dphi / r)	-- divide by 'r' because see #1 above
-		local sin_dphi = math.sin(dphi / r)
+		dphi /= r	-- divide by 'r' because see #1 above
+		local cos_dphi = math.cos(dphi)
+		local sin_dphi = math.sin(dphi)
 		return matrix{
 			{cos_dphi, -sin_dphi},
 			{sin_dphi, cos_dphi}
@@ -410,7 +415,10 @@ SphereSurface.startCoord = {math.pi/2, math.pi}	-- poles along x axis
 SphereSurface.createMetric = [:] do
 	local theta, phi = self.coordVars:unpack()
 	local r = 1
-	return symmath.Tensor('_ab', {r^2, 0}, {0, r^2 * symmath.sin(theta)^2})
+	return symmath.Tensor('_ab',
+		{r^2, 0},
+		{0, r^2 * symmath.sin(theta)^2}
+	)
 end
 
 
@@ -423,7 +431,10 @@ TorusSurface.createMetric = [:] do
 	local theta, phi = self.coordVars:unpack()
 	local r = 2
 	local R = 5
-	return symmath.Tensor('_ab', {r^2, 0}, {0, (R + r * symmath.sin(theta))^2})
+	return symmath.Tensor('_ab',
+		{r^2, 0},
+		{0, (R + r * symmath.sin(theta))^2}
+	)
 end
 
 local PoincareDisk2D = Geometry:subclass()
@@ -433,7 +444,10 @@ PoincareDisk2D.xmax = {1, 1}
 PoincareDisk2D.startCoord = {0, 0}
 PoincareDisk2D.createMetric = [:] do
 	local u, v = self.coordVars:unpack()
-	return symmath.Tensor('_ab', {4 / (1 - u^2 - v^2), 0}, {0, 4 / (1 - u^2 - v^2)})
+	return symmath.Tensor('_ab',
+		{4 / (1 - u^2 - v^2), 0},
+		{0, 4 / (1 - u^2 - v^2)}
+	)
 end
 
 
@@ -443,7 +457,11 @@ Minkowski2D.coords = {'t', 'x'}
 Minkowski2D.xmin = {-1, -1}
 Minkowski2D.xmax = {1, 1}
 Minkowski2D.startCoord = {0,0}
-Minkowski2D.createMetric = [:] symmath.Tensor('_ab', {-1, 0}, {0, 1})
+Minkowski2D.createMetric = [:]
+	symmath.Tensor('_ab',
+		{-1, 0},
+		{0, 1}
+	)
 
 
 -- here's Schwarzschild in time and in radial
@@ -456,7 +474,10 @@ Schwarzschild1Plus1.startCoord = {2, 0}
 Schwarzschild1Plus1.createMetric = [:] do
 	local r, t = self.coordVars:unpack()
 	local mass = .1
-	return symmath.Tensor('_ab', {1/(1 - 2 * mass / r), 0}, {0, 1 - 2 * mass / r})
+	return symmath.Tensor('_ab',
+		{1/(1 - 2 * mass / r), 0},
+		{0, 1 - 2 * mass / r}
+	)
 end
 
 -- Schwarzschild in time and radial
@@ -493,7 +514,10 @@ LagrangianTotalEnergy.create_gs = [:]
 		local a, b = self.app.xs[{...}]:unpack()
 		local E = 10
 		local r = 2 * E - a^2 - b^2
-		return matrix{{r, 0}, {0, r}}
+		return matrix{
+			{r, 0},
+			{0, r}
+		}
 	end)
 
 
@@ -501,15 +525,30 @@ LagrangianTotalEnergy.create_gs = [:]
 
 
 local Cylinder = Geometry:subclass()
-Cylinder.coords = {'r', 'θ', 'z'}
+Cylinder.coords = {'r', 'φ', 'z'}
 Cylinder.xmin = {1, 0, -5}
 Cylinder.xmax = {10, 2*math.pi, 5}
 Cylinder.startCoord = {1,math.pi,0}
 Cylinder.createMetric = [:] do
-	local r, theta, z = self.coordVars:unpack()
-	return symmath.Tensor('_ab', {1, 0, 0}, {0, r^2, 0}, {0, 0, 1})
+	local r, phi, z = self.coordVars:unpack()
+	return symmath.Tensor('_ab',
+		{1, 0, 0},
+		{0, r^2, 0},
+		{0, 0, 1}
+	)
 end
-
+Cylinder.exactChart = [:, r, phi, z] do
+	return matrix{r * math.cos(phi), r * math.sin(phi), z}
+end
+Cylinder.exactBasis = [:, r, phi, z] do
+	local c = math.cos(phi)
+	local s = math.sin(phi)
+	return matrix{
+		{c, s, 0},		-- e_r
+		{-s, c, 0},		-- e_φ
+		{0, 0, 1},		-- e_z
+	}
+end
 
 local Sphere = Geometry:subclass()
 local eps = .05	-- the holonomic connection gets singularities (cot theta = inf) at the boundaries
@@ -523,9 +562,30 @@ Sphere.startCoord = {1, math.pi/2, 0}
 --Sphere.startCoord = {2, math.pi/2, math.pi-2*eps}	-- ... though it does a tiny bit (makes some waves in the coordinate system) if r_0 is not 1
 Sphere.createMetric = [:] do
 	local r, theta, phi = self.coordVars:unpack()
-	return symmath.Tensor('_ab', {1,0,0}, {0, r^2, 0}, {0, 0, r^2 * symmath.sin(theta)^2})
+	return symmath.Tensor('_ab',
+		{1,0,0},
+		{0, r^2, 0},
+		{0, 0, r^2 * symmath.sin(theta)^2}
+	)
 end
-
+Sphere.exactChart = [:, r, theta, phi] do
+	local ct = math.cos(theta)
+	local st = math.sin(theta)
+	local cp = math.cos(phi)
+	local sp = math.sin(phi)
+	return matrix{r * cp * st, r * sp * st, r * ct}
+end
+Sphere.exactBasis = [:, r, theta, phi] do
+	local ct = math.cos(theta)
+	local st = math.sin(theta)
+	local cp = math.cos(phi)
+	local sp = math.sin(phi)
+	return matrix{
+		{cp * st, sp * st, ct},					-- e_r
+		{r * cp * ct, r * sp * ct, r * -st},	-- e_θ
+		{r * -sp, r * cp, 0},					-- e_φ
+	}
+end
 
 -- TODO I'm betting x0 or e0 is off.  btw there's no way to customize e0(x0) ...
 local Torus = Geometry:subclass()
@@ -551,7 +611,11 @@ PoincareDisk3D.xmax = {1, 1, 1}
 PoincareDisk3D.startCoord = {0, 0, 0}
 PoincareDisk3D.createMetric = [:] do
 	local u, v, w = self.coordVars:unpack()
-	return symmath.Tensor('_ab', {4 / (1 - u^2 - v^2 - w^2), 0, 0}, {0, 4 / (1 - u^2 - v^2 - w^2), 0}, {0, 0, 4 / (1 - u^2 - v^2 - w^2)})
+	return symmath.Tensor('_ab',
+		{4 / (1 - u^2 - v^2 - w^2), 0, 0},
+		{0, 4 / (1 - u^2 - v^2 - w^2), 0},
+		{0, 0, 4 / (1 - u^2 - v^2 - w^2)}
+	)
 end
 
 
@@ -1107,15 +1171,22 @@ print('comparing index', index, 'x', self.xs[index])
 		-- numerically calculate parallel-propagator from connection exp
 		else
 			self.getParallelPropagatorInv = [:, k, ds, x] do
-				local connk = self:getConn(x)(_,_,k)
+				local connk = self:getConn(x)
 				local x2 = x:clone()
 				x2[k] += ds
 				local connkMid = self:getConn(x2)(_,_,k)
 
-				-- now we want to calculate P(x,x+dxk) = exp(int(conn_k from x to x+dxk))
+				-- numerically integrate from connk to connkMid along ds ... using a single trapezoid
+				-- maybe TODO could be using the 'integrate' library
+				local connInt = (.5 * ds) * (connk + connkMid)
+
+				-- now we want to calculate P(x,x+dxk) = exp(-int(conn_k from x to x+dxk))
 				-- so first we want to integrate from connk to connkMid along ds ...
 				-- next we want to exponent the integral
-				error'TODO'
+				-- ... but for propagating one-forms, i.e. basis components in embedded space, we want to multiply by P^-T
+				local A = matrix_ffi((connInt:T()), 'complex double')
+				local expA = A:expm()
+				return expA:toLuaMatrix()
 			end
 		end
 
@@ -1442,11 +1513,13 @@ print('*** comparing connections from create_gs / create whatever to create_conn
 			com += self.Xs[i]
 		end
 	end
-	com = com / self.size:prod()
+	com /= self.size:prod()
 	for i=1,n do
 		self.view.pos.s[i-1] = -com[i]
 		self.view.orbit.s[i-1] = -com[i]
 	end
+	self.view.pos.z += self.viewDist
+	self.view.angle:set(0,0,0,1)
 
 	local vertexes = table()
 	local vertex2s = table()
