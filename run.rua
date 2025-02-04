@@ -10,6 +10,21 @@ local vec3d = require 'vec-ffi.vec3d'
 local GLSceneObject = require 'gl.sceneobject'
 local gnuplot = require 'gnuplot'
 
+require 'ext.cmdline'.validate{
+	help = {
+		validate = function(...)
+			return require 'ext.cmdline'.showHelpAndQuit(...)
+		end,
+	},
+	geom = true,
+	size = true,
+	integrationMethod = true,
+	calcConnFromMetric = true,
+	integrateEWithPP = true,
+	calcPPFromConn = true,
+	quit = true,
+}
+
 --[[ debugging floats ...
 local origprint = print
 local print = [...] do
@@ -128,79 +143,84 @@ Geometry.testExact = [:] do
 		y = matrix{app.size[2]-2}:lambda([j] app.xs[1][j+1][2])
 	end
 
-	local zrange = app.size - 2
+	local zrange = app.size - 3
 	zrange[1] = math.max(zrange[1], 1)
 	zrange[2] = math.max(zrange[2], 1)
 
-	for _,info in ipairs{
-		-- position integrated vs exact
-		{
-			name = 'pos',
-			title = 'X',
-			has = [] self.exactChart,
-			calcz = [] do
-				return zrange:lambda([i,j] do
-					-- [[ do I do this way?
-					local iR = zrange[1] == 1 and i or i+1
-					local jR = zrange[2] == 1 and j or j+1
-					local is = {iR,jR}
-					--]]
-					--[[ or this way?
-					local is = {i,j}
-					--]]
-					local exact = self:exactChart(app.xs[is]:unpack())
-					return (exact - app.Xs[is]):norm() / exact:norm()
-				end)
-			end,
-		},
-		-- basis integrated/propagated vs exact
-		{
-			name = 'basis',
-			title = 'e_a^b',
-			has = [] self.exactBasis,
-			calcz = [] do
-				return zrange:lambda([i,j] do
-					-- [[ do I do this way?
-					local iR = zrange[1] == 1 and i or i+1
-					local jR = zrange[2] == 1 and j or j+1
-					local is = {iR,jR}
-					--]]
-					--[[ or this way?  nope, too much error at the border.
-					local is = {i,j}
-					--]]
-					local exact = self:exactBasis(app.xs[is]:unpack())
-					return (exact - app.es[is]):norm() / exact:norm()
-				end)
-			end,
-		},
-		-- connections ... numerical-finite-difference-of-metric vs exact ...
-		-- only needed when the connection is calculated numerically from the metric and is not provided explicitly.
-		{
-			name = 'conn',	-- filename
-			title = 'Γ^a_b_c',	-- gnuplot title
-			has = [] self.calc_conns,
-			calcz = [] do
-				return zrange:lambda([i,j] do
-					local iR = zrange[1] == 1 and i or i+1
-					local jR = zrange[2] == 1 and j or j+1
-					local exact = self.calc.Conn(self.app.xs[iR][jR])
-					return (exact - app.conns[iR][jR]):norm() / exact:norm()
-				end)
+	for relindex=0,1 do
+		local relativeError = relindex == 1
+		for _,info in ipairs{
+			-- position integrated vs exact
+			{
+				name = 'pos',
+				title = 'X',
+				has = [] self.exactChart,
+				calcz = [] do
+					return zrange:lambda([i,j] do
+						local exact = self:exactChart(app.xs[i+1][j+1]:unpack())
+						local err = (exact - app.Xs[i+1][j+1]):normSq()
+						if relativeError then
+							err = math.sqrt(err / exact:normSq())
+						else
+							err = math.sqrt(err / zrange:size():volume())
+						end
+						return err
+					end)
+				end,
+			},
+			-- basis integrated/propagated vs exact
+			{
+				name = 'basis',
+				title = 'e_a^b',
+				has = [] self.exactBasis,
+				calcz = [] do
+					return zrange:lambda([i,j] do
+						local exact = self:exactBasis(app.xs[i+1][j+1]:unpack())
+						local err = (exact - app.es[i+1][j+1]):normSq()
+						if relativeError then
+							err = math.sqrt(err / exact:normSq())
+						else
+							err = math.sqrt(err / zrange:size():volume())
+						end
+						return err
+					end)
+				end,
+			},
+			-- connections ... numerical-finite-difference-of-metric vs exact ...
+			-- only needed when the connection is calculated numerically from the metric and is not provided explicitly.
+			{
+				name = 'conn',	-- filename
+				title = 'Γ^a_b_c',	-- gnuplot title
+				has = [] self.create_conns and app.calcConnFromMetric,
+				calcz = [] do
+					local exactConns = self:create_conns()	-- TODO rename this to 'exactConns' or something to be like pos and basis exact?
+					return zrange:lambda([i,j] do
+						local exact = exactConns[i+1][j+1]
+						--local exact = self.calc.Conn(self.app.xs[i+1][j+1])
+						local err = (exact - app.conns[i+1][j+1]):normSq()
+						if relativeError then
+							err = math.sqrt(err / exact:normSq())
+						else
+							err = math.sqrt(err / zrange:size():volume())
+						end
+						return err
+					end)
+				end
+			},
+		} do
+			if info.has() then
+				z = info.calcz()
+				gnuplot{
+					output = info.name..' numeric vs analytic'..(relativeError and ' relative' or '')..'.png',
+					style = 'data lines',
+					xlabel = self.coords and self.coords[1] or 'x^1',
+					ylabel = self.coords and self.coords[2] or 'x^2',
+					--log = 'z',
+					griddata = {x = x, y = y, z},
+					{splot=true, using='1:2:3', title = info.title..' |analytic - numeric|'},
+				}
+				print('max '..info.title..' |analytic - numeric|'..(relativeError and ' relative' or ''), z:normLInf())
 			end
-		},
-	} do
-		if info.has() then
-			z = info.calcz()
-			gnuplot{
-				output = info.name..' numeric vs analytic.png',
-				style = 'data lines',
-				xlabel = self.coords and self.coords[1] or 'x^1',
-				ylabel = self.coords and self.coords[2] or 'x^2',
-				--log = 'z',
-				griddata = {x = x, y = y, z},
-				{splot=true, using='1:2:3', title = info.title..' |analytic - numeric|'},
-			}
-			print('max '..info.title..' |analytic - numeric|', z:normLInf())
 		end
 	end
 end
@@ -817,7 +837,7 @@ void main() {
 		},
 	}
 
-	self:buildSurface'Polar'
+	self:buildSurface(cmdline.geom or 'Polar')
 end
 
 local geomClassesForName = table{
@@ -928,7 +948,9 @@ App.buildSurface = [:, geomName] do
 	local n = #geom.coords
 
 	-- size = lattice size (not necessary correlating with points or lines)
-	self.size = matrix{n}:lambda([i] (({[2]=16, [3]=16, [4]=8})[n]) )
+	self.size = cmdline.size
+		and matrix(cmdline.size)
+		or matrix{n}:lambda([i] (({[2]=16, [3]=16, [4]=8})[n]) )
 
 	-- detail = how many extra steps between lattice points to emit lines ...
 	-- ... if I do this then should the metric be interpolated?  or should it be constant? should the filter method be chosen in the GUI?
@@ -946,7 +968,7 @@ App.buildSurface = [:, geomName] do
 		{['F.E.'] = int_fe},
 		{RK4 = int_rk4},
 	}
-	self.integrationMethod = 2
+	self.integrationMethod = cmdline.integrationMethod or 2
 
 	-- TODO more flags ...
 	-- - use provided conn vs finite-difference conn
@@ -956,15 +978,20 @@ App.buildSurface = [:, geomName] do
 	-- if the geometry doesn't have 'create_conns' then we must use finite-difference of metric
 	-- true = use g_uv for Conn_abc
 	-- false = use Conn_abc provided in geom.create_conns
-	self.calcConnFromMetric = false	-- not geom.create_conns
-
-	-- true = use matrix-exp to calc P(x,y) from Conn_abc
-	-- false = use P(x,y) provided in geom.parallelPropagatorInvs
-	self.calcPPFromConn = false
+	-- TODO would be convenient if ?? tested for nil instead of false
+	self.calcConnFromMetric = cmdline.calcConnFromMetric
+	if self.calcConnFromMetric == nil then self.calcConnFromMetric = false end
 
 	-- true = use P(x+dx,x) * e(x) => e(x+dx)
 	-- false = e(x+dx) = integral( conn * e(x+s) ds)
-	self.integrateEWithPP = true
+	self.integrateEWithPP = cmdline.integrateEWithPP
+	if self.integrateEWithPP == nil then self.integrateEWithPP = true end
+
+	-- true = use matrix-exp to calc P(x,y) from Conn_abc
+	-- false = use P(x,y) provided in geom.parallelPropagatorInvs
+	self.calcPPFromConn = cmdline.calcPPFromConn
+	if self.calcPPFromConn == nil then self.calcPPFromConn = false end
+
 
 --[[
 	self.domain = self.env:domain{size=self.size}
@@ -1171,22 +1198,29 @@ print('comparing index', index, 'x', self.xs[index])
 		-- numerically calculate parallel-propagator from connection exp
 		else
 			self.getParallelPropagatorInv = [:, k, ds, x] do
-				local connk = self:getConn(x)
+				local connk = self:getConn(x)(_,_,k)
 				local x2 = x:clone()
 				x2[k] += ds
 				local connkMid = self:getConn(x2)(_,_,k)
 
 				-- numerically integrate from connk to connkMid along ds ... using a single trapezoid
 				-- maybe TODO could be using the 'integrate' library
-				local connInt = (.5 * ds) * (connk + connkMid)
+				local connkInt = (.5 * ds) * (connk + connkMid)
 
 				-- now we want to calculate P(x,x+dxk) = exp(-int(conn_k from x to x+dxk))
 				-- so first we want to integrate from connk to connkMid along ds ...
 				-- next we want to exponent the integral
 				-- ... but for propagating one-forms, i.e. basis components in embedded space, we want to multiply by P^-T
-				local A = matrix_ffi((connInt:T()), 'complex double')
+				local A = matrix_ffi(connkInt:T(), 'complex double')
 				local expA = A:expm()
-				return expA:toLuaMatrix()
+				expA = matrix_ffi(expA, 'double'):toLuaMatrix()
+print()
+print('x', x, 'k', k, 'ds', ds)
+print'A'
+print(A)
+print'expA'
+print(expA)
+				return expA
 			end
 		end
 
@@ -1756,6 +1790,8 @@ App.update = [:] do
 	end
 
 	App.super.update(self)
+
+	if cmdline.quit then self:requestExit() end
 end
 
 App.updateGUI = [:] do
@@ -1796,10 +1832,10 @@ App.updateGUI = [:] do
 		if ig.luatableCheckbox('use finite-difference-metric conn (vs provided)', self, 'calcConnFromMetric') then
 			self:rebuildSurface()
 		end
-		if ig.luatableCheckbox('use matrix-exp-conn propagator (vs provided)', self, 'calcPPFromConn') then
+		if ig.luatableCheckbox('propagate basis (vs integrate)', self, 'integrateEWithPP') then
 			self:rebuildSurface()
 		end
-		if ig.luatableCheckbox('propagate basis (vs integrate)', self, 'integrateEWithPP') then
+		if ig.luatableCheckbox('use matrix-exp-conn propagator (vs provided)', self, 'calcPPFromConn') then
 			self:rebuildSurface()
 		end
 
