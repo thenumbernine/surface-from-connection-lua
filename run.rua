@@ -134,13 +134,13 @@ Geometry.testExact = [:] do
 	if app.size[1] == 1 then
 		x = matrix{1}:lambda([i] app.xs[1][1][1])
 	else
-		x = matrix{app.size[1]-2}:lambda([i] app.xs[i+1][1][1])
+		x = matrix{app.size[1]-3}:lambda([i] app.xs[i+1][1][1])
 	end
 
 	if app.size[2] == 1 then
 		y = matrix{1}:lambda([j] app.xs[1][1][2])
 	else
-		y = matrix{app.size[2]-2}:lambda([j] app.xs[1][j+1][2])
+		y = matrix{app.size[2]-3}:lambda([j] app.xs[1][j+1][2])
 	end
 
 	local zrange = app.size - 3
@@ -162,7 +162,7 @@ Geometry.testExact = [:] do
 						if relativeError then
 							err = math.sqrt(err / exact:normSq())
 						else
-							err = math.sqrt(err / zrange:size():volume())
+							err = math.sqrt(err / zrange:size():prod())
 						end
 						return err
 					end)
@@ -180,7 +180,7 @@ Geometry.testExact = [:] do
 						if relativeError then
 							err = math.sqrt(err / exact:normSq())
 						else
-							err = math.sqrt(err / zrange:size():volume())
+							err = math.sqrt(err / zrange:size():prod())
 						end
 						return err
 					end)
@@ -201,7 +201,7 @@ Geometry.testExact = [:] do
 						if relativeError then
 							err = math.sqrt(err / exact:normSq())
 						else
-							err = math.sqrt(err / zrange:size():volume())
+							err = math.sqrt(err / zrange:size():prod())
 						end
 						return err
 					end)
