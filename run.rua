@@ -978,19 +978,15 @@ App.buildSurface = [:, geomName] do
 	-- if the geometry doesn't have 'create_conns' then we must use finite-difference of metric
 	-- true = use g_uv for Conn_abc
 	-- false = use Conn_abc provided in geom.create_conns
-	-- TODO would be convenient if ?? tested for nil instead of false
-	self.calcConnFromMetric = cmdline.calcConnFromMetric
-	if self.calcConnFromMetric == nil then self.calcConnFromMetric = false end
+	self.calcConnFromMetric = cmdline.calcConnFromMetric ?? false
 
 	-- true = use P(x+dx,x) * e(x) => e(x+dx)
 	-- false = e(x+dx) = integral( conn * e(x+s) ds)
-	self.integrateEWithPP = cmdline.integrateEWithPP
-	if self.integrateEWithPP == nil then self.integrateEWithPP = true end
+	self.integrateEWithPP = cmdline.integrateEWithPP ?? true
 
 	-- true = use matrix-exp to calc P(x,y) from Conn_abc
 	-- false = use P(x,y) provided in geom.parallelPropagatorInvs
-	self.calcPPFromConn = cmdline.calcPPFromConn
-	if self.calcPPFromConn == nil then self.calcPPFromConn = false end
+	self.calcPPFromConn = cmdline.calcPPFromConn ?? false
 
 
 --[[
