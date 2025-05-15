@@ -548,7 +548,7 @@ local function I(x)
 end
 
 
-local App = require 'imguiapp.withorbit'()
+local App = require 'imgui.appwithorbit'()
 App.title = 'reconstruct surface from geodesics'
 App.viewDist = 10
 
