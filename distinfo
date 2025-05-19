@@ -1,0 +1,32 @@
+name = "surface-from-connection"
+files = {
+	["LICENSE"] = "surface-from-connection/LICENSE",
+	["README.md"] = "surface-from-connection/README.md",
+	["docs/README.html"] = "surface-from-connection/docs/README.html",
+	["docs/conn numeric vs analytic.png"] = "surface-from-connection/docs/conn numeric vs analytic.png",
+	["docs/polar anholonomic - r=1, theta=0.png"] = "surface-from-connection/docs/polar anholonomic - r=1, theta=0.png",
+	["docs/polar anholonomic - r=1, theta=pi.png"] = "surface-from-connection/docs/polar anholonomic - r=1, theta=pi.png",
+	["docs/polar anholonomic - r=2, theta=0.png"] = "surface-from-connection/docs/polar anholonomic - r=2, theta=0.png",
+	["docs/polar-correct.png"] = "surface-from-connection/docs/polar-correct.png",
+	["docs/polar-incorrect-r=.5.png"] = "surface-from-connection/docs/polar-incorrect-r=.5.png",
+	["docs/polar-incorrect-r=2.png"] = "surface-from-connection/docs/polar-incorrect-r=2.png",
+	["docs/sphere - r=1, theta=.5 pi, phi=0.png"] = "surface-from-connection/docs/sphere - r=1, theta=.5 pi, phi=0.png",
+	["docs/sphere - r=2, theta=.5 pi, phi=0.png"] = "surface-from-connection/docs/sphere - r=2, theta=.5 pi, phi=0.png",
+	["docs/sphere surface - theta=.5 pi phi=0.png"] = "surface-from-connection/docs/sphere surface - theta=.5 pi phi=0.png",
+	["docs/sphere surface - theta=.5 pi phi=2 pi.png"] = "surface-from-connection/docs/sphere surface - theta=.5 pi phi=2 pi.png",
+	["docs/sphere surface - theta=.5 pi phi=pi.png"] = "surface-from-connection/docs/sphere surface - theta=.5 pi phi=pi.png",
+	["docs/tryToFindMathJax.js"] = "surface-from-connection/docs/tryToFindMathJax.js",
+	["run.lua"] = "surface-from-connection/run.lua",
+	["run.rua"] = "surface-from-connection/run.rua",
+	["surface-from-connection-dev-1.rockspec"] = "surface-from-connection/surface-from-connection-dev-1.rockspec",
+}
+deps = {
+	"ext",
+	"gl",
+	"glapp",
+	"gnuplot",
+	"imgui",
+	"matrix",
+	"symmath",
+	"vec-ffi",
+}
