@@ -559,7 +559,7 @@ function App:initGL()
 	self.controlsOpened = true
 	self.geomID = 1
 
-	self.lineVtxs = ffi.new'vec3f_t[2]'
+	self.lineVtxs = ffi.new'vec3f[2]'
 	self.lineObj = GLSceneObject{
 		program = {
 			version = 'latest',
@@ -581,7 +581,7 @@ void main() {
 		},
 		vertexes = {
 			data = ffi.cast('float*', self.lineVtxs),
-			size = ffi.sizeof'vec3f_t' * 2,
+			size = ffi.sizeof'vec3f' * 2,
 			dim = 3,
 			count = 2,
 		},
@@ -1281,7 +1281,7 @@ function App:updateGUI()
 		local n = #self.size
 		for _,field in ipairs{'xmin', 'xmax', 'startCoord'} do
 			for j=1,n do
-				if ig.luatableTooltipInputFloat(field..' '..j, self.geom[field], j, .01, .1, '%f', ig.ImGuiInputTextFlags_EnterReturnsTrue) then
+				if ig.luatableTooltipInputFloat(field..' '..j, self.geom[field], j, .01, .1, '%f') then
 					self:rebuildSurface()
 				end
 				if j < n then ig.igSameLine() end
