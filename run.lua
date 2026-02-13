@@ -1240,7 +1240,7 @@ function App:update()
 	elseif n == 3 then
 		-- draw the xyz basis
 		-- TODO viewport instead?
-		local hudView = require 'glapp.view'{
+		local hudView = require 'app3d.view'{
 			angle = self.view.angle,
 		}
 		local vec3d = require 'vec-ffi.vec3d'

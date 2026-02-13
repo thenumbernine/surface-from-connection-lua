@@ -26,9 +26,9 @@ files = {
 	"surface-from-connection-dev-1.rockspec",
 }
 deps = {
+	"app3d",
 	"ext",
 	"gl",
-	"glapp",
 	"gnuplot",
 	"imgui",
 	"matrix",
